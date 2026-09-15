@@ -159,19 +159,36 @@ https://<function-app>.scm.azurewebsites.net/api/settings
 Unauthorized (CODE: 401)
 ```
 
-Die häufigsten Ursachen sind ein veraltetes Publish Profile oder deaktivierte SCM-Basic-Authentication.
+Mögliche Ursachen sind ein veraltetes Publish Profile oder deaktivierte SCM-Basic-Authentication. In diesem Fall hilft ein neu heruntergeladenes Publish Profile unter **Overview → Download publish profile** und die Option **SCM Basic Auth Publishing Credentials** unter **Configuration → General settings → Platform settings**.
 
-1. In Azure Portal die richtige Function App öffnen.
-2. **Overview → Download publish profile** wählen.
-3. Im GitHub-Repository unter **Settings → Secrets and variables → Actions** das Secret ersetzen, das im Workflow bei `publish-profile` verwendet wird. Bei den von Azure erzeugten Workflows lautet es meistens `AZUREAPPSERVICE_PUBLISHPROFILE`.
-4. Den vollständigen Inhalt der heruntergeladenen XML-Datei als Secret-Wert einfügen. Nicht nur einen einzelnen Schlüssel kopieren.
-5. In Azure unter **Configuration → General settings → Platform settings** prüfen, dass **SCM Basic Auth Publishing Credentials** aktiviert ist.
-6. Prüfen, dass `app-name` im Workflow exakt dem Namen der Function App entspricht und bei einem Slot zusätzlich der richtige `slot-name` verwendet wird.
-7. Den Workflow erneut starten.
+### Fehler 405 und 404 bei Kudu und ZipDeploy
 
-Falls die Function App oder ihre SCM-Site über **Networking → Access restrictions** eingeschränkt ist, muss der SCM-Endpunkt den GitHub-Hosted-Runnern ebenfalls Zugriff erlauben. Ein solcher Netzwerkfehler erscheint allerdings meist als `403` oder Timeout, nicht als `401`.
+Zeigt das Log dagegen folgendes Muster, liegt es nicht an den Zugangsdaten:
 
-Das Publish Profile und der Function Key sind Geheimnisse. Sie dürfen nicht in den Quellcode, die README oder Workflow-Logs gelangen. Wenn ein Publish Profile versehentlich offengelegt wurde, sollte es in Azure neu generiert und das GitHub Secret sofort ersetzt werden.
+```text
+updateAppSettingViaKudu
+Response with status code 405
+App setting SCM_DO_BUILD_DURING_DEPLOYMENT has not been propagated to Kudu container yet
+...
+zipDeploy
+Not Found (CODE: 404)
+```
+
+Diese Function App läuft dann auf **Flex Consumption**. Dort existieren die Kudu-Endpunkte `/api/settings` und `/api/zipdeploy` nicht, und Publish Profiles beziehungsweise Basic Auth werden nicht unterstützt. Das Deployment muss über Microsoft Entra ID (OIDC) und die ARM-Deployment-API erfolgen.
+
+Der Workflow in diesem Repository verwendet deshalb `azure/login` mit folgenden GitHub Secrets:
+
+| Secret | Inhalt |
+|---|---|
+| `AZURE_CLIENT_ID` | Client ID der Deployment-App-Registrierung beziehungsweise User-assigned Managed Identity |
+| `AZURE_TENANT_ID` | Tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Subscription ID der Function App |
+
+Die Identität benötigt auf der Function App die Rolle **Contributor** oder **Website Contributor** sowie eine Federated Credential für dieses Repository und den Branch `main`.
+
+Am einfachsten wird das im Azure Portal erzeugt: **Function App → Deployment Center → Source: GitHub → Authentication: User-assigned identity**. Azure legt Identität, Rollenzuweisung, Federated Credential und die Secrets automatisch an.
+
+Publish Profile und Function Key sind Geheimnisse. Sie dürfen nicht in Quellcode, README oder Logs gelangen. Ein versehentlich offengelegtes Publish Profile muss in Azure neu generiert werden.
 
 ## Projektstruktur
 
