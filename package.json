@@ -1,0 +1,24 @@
+﻿{
+    "name":  "easylife-onenote-template-function",
+    "version":  "1.0.0",
+    "private":  true,
+    "description":  "Azure Function that copies a OneNote template (e.g. Traktandenliste) into a new EasyLife 365 group/team notebook via Microsoft Graph.",
+    "main":  "dist/src/index.js",
+    "scripts":  {
+                    "build":  "tsc -p .",
+                    "watch":  "tsc -p . --watch",
+                    "prestart":  "npm run build",
+                    "start":  "func start",
+                    "clean":  "rimraf dist"
+                },
+    "dependencies":  {
+                         "@azure/functions":  "^4.5.1",
+                         "@azure/msal-node":  "^6.0.0"
+                     },
+    "devDependencies":  {
+                            "@types/jsonwebtoken":  "^9.0.6",
+                            "@types/node":  "^20.14.9",
+                            "rimraf":  "^5.0.7",
+                            "typescript":  "^5.5.3"
+                        }
+}
