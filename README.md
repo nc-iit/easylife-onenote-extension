@@ -149,6 +149,30 @@ git push origin main
 
 Die Secrets und Application Settings werden nicht aus `local.settings.json` deployt. Sie müssen in Azure separat gepflegt werden.
 
+### Fehler 401 beim Deploy mit `Azure/functions-action`
+
+Wenn der Build erfolgreich ist, der Deploy-Schritt aber bei `ValidateAzureResource` mit einem Fehler wie dem folgenden abbricht, betrifft das normalerweise die SCM-/Kudu-Anmeldung:
+
+```text
+Failed to fetch Kudu App Settings
+https://<function-app>.scm.azurewebsites.net/api/settings
+Unauthorized (CODE: 401)
+```
+
+Die häufigsten Ursachen sind ein veraltetes Publish Profile oder deaktivierte SCM-Basic-Authentication.
+
+1. In Azure Portal die richtige Function App öffnen.
+2. **Overview → Download publish profile** wählen.
+3. Im GitHub-Repository unter **Settings → Secrets and variables → Actions** das Secret ersetzen, das im Workflow bei `publish-profile` verwendet wird. Bei den von Azure erzeugten Workflows lautet es meistens `AZUREAPPSERVICE_PUBLISHPROFILE`.
+4. Den vollständigen Inhalt der heruntergeladenen XML-Datei als Secret-Wert einfügen. Nicht nur einen einzelnen Schlüssel kopieren.
+5. In Azure unter **Configuration → General settings → Platform settings** prüfen, dass **SCM Basic Auth Publishing Credentials** aktiviert ist.
+6. Prüfen, dass `app-name` im Workflow exakt dem Namen der Function App entspricht und bei einem Slot zusätzlich der richtige `slot-name` verwendet wird.
+7. Den Workflow erneut starten.
+
+Falls die Function App oder ihre SCM-Site über **Networking → Access restrictions** eingeschränkt ist, muss der SCM-Endpunkt den GitHub-Hosted-Runnern ebenfalls Zugriff erlauben. Ein solcher Netzwerkfehler erscheint allerdings meist als `403` oder Timeout, nicht als `401`.
+
+Das Publish Profile und der Function Key sind Geheimnisse. Sie dürfen nicht in den Quellcode, die README oder Workflow-Logs gelangen. Wenn ein Publish Profile versehentlich offengelegt wurde, sollte es in Azure neu generiert und das GitHub Secret sofort ersetzt werden.
+
 ## Projektstruktur
 
 ```text
