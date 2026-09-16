@@ -2,6 +2,7 @@
     "name":  "easylife-onenote-template-function",
     "version":  "1.0.0",
     "private":  true,
+    "author":  "Andy Bui, uniQconsulting ag",
     "description":  "Azure Function that copies a OneNote template (e.g. Traktandenliste) into a new EasyLife 365 group/team notebook via Microsoft Graph.",
     "main":  "dist/src/index.js",
     "scripts":  {
