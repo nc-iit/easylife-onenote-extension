@@ -157,11 +157,7 @@ Use this as the webhook URL:
 https://<function-app-name>.azurewebsites.net/api/onenote-template
 ```
 
-If your EasyLife version does not send the authentication code as the `x-functions-key` header, append it to the URL instead:
-
-```text
-https://<function-app-name>.azurewebsites.net/api/onenote-template?code=<function-key>
-```
+If your EasyLife version does not send the authentication code as the `x-functions-key` header, the Function also accepts a `code` query parameter. Prefer the **Authentication code** field, because keys in URLs can end up in logs and configuration views.
 
 Find the Function key under **Function App → Functions → provisionOneNoteTemplate → Function keys**.
 
