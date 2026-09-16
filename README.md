@@ -87,11 +87,12 @@ The Function App uses a separate Microsoft Entra app registration for Microsoft 
 
 In **API permissions → Add a permission → Microsoft Graph → Application permissions**, add:
 
-- `Notes.ReadWrite.All`
-- `Group.ReadWrite.All`
-- `Sites.Read.All` when the template is stored in a SharePoint site
+- `Sites.ReadWrite.All`
+- `Group.Read.All`
 
 Then select **Grant admin consent** for the tenant.
+
+> **Why not the OneNote API?** Microsoft Graph rejects app-only tokens for the OneNote API (error `40001`, enforced since 31 March 2025). This project therefore copies OneNote sections as their underlying `.one` files through the SharePoint Drive API, which still supports app-only access. `Notes.ReadWrite.All` is not required.
 
 Under **Certificates & secrets**, create a client secret. Copy the secret value immediately; it cannot be fully displayed again later.
 

@@ -85,11 +85,12 @@ Die Function benötigt eine separate Microsoft-Entra-App-Registrierung für Micr
 
 In **API permissions** → **Add a permission** → **Microsoft Graph** → **Application permissions** hinzufügen:
 
-- `Notes.ReadWrite.All`
-- `Group.ReadWrite.All`
-- `Sites.Read.All` für Vorlagen in SharePoint-Sites
+- `Sites.ReadWrite.All`
+- `Group.Read.All`
 
 Danach unbedingt **Grant admin consent** für den Tenant ausführen.
+
+> **Warum nicht die OneNote-API?** Microsoft Graph lehnt App-only-Token für die OneNote-API ab (Fehler `40001`, seit 31.03.2025 erzwungen). Dieses Projekt kopiert OneNote-Sections deshalb als zugrunde liegende `.one`-Dateien über die SharePoint-Drive-API, die App-only weiterhin unterstützt. `Notes.ReadWrite.All` wird nicht benötigt.
 
 Unter **Certificates & secrets** ein Client Secret erstellen. Den Secret-Wert direkt kopieren; er wird später nicht erneut vollständig angezeigt.
 

@@ -1,6 +1,6 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { getGraphAccessToken } from "../services/graphClient";
-import { copyTemplateSectionToGroup, TemplateSource } from "../services/oneNoteTemplateCopier";
+import { copyTemplateSectionsToGroup, TemplateSource } from "../services/notebookSectionCopier";
 
 /** Extracts the newly created group's id from the EasyLife 365 webhook payload. */
 function extractGroupId(body: unknown): string | undefined {
@@ -72,14 +72,14 @@ export async function provisionOneNoteTemplate(
 
   try {
     const token = await getGraphAccessToken();
-    const result = await copyTemplateSectionToGroup({
+    const result = await copyTemplateSectionsToGroup({
       token,
       source,
       sections: buildSectionMappings(templateSectionNames, targetSectionNames),
       targetGroupId,
     });
 
-    context.log(`Copied ${result.pagesCopied} page(s) into group ${targetGroupId}.`, JSON.stringify(result.sections));
+    context.log(`Copied ${result.sectionsCopied.length} section(s) into group ${targetGroupId}.`, JSON.stringify(result));
     return { status: 200, jsonBody: { status: "ok", ...result } };
   } catch (err) {
     context.error("Failed to copy OneNote template", err);
