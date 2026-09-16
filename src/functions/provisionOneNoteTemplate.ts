@@ -33,6 +33,7 @@ export async function provisionOneNoteTemplate(
 
   const targetGroupId = extractGroupId(body);
   if (!targetGroupId) {
+    context.warn("No group id found in webhook payload.");
     return { status: 400, jsonBody: { error: "Could not determine groupId from webhook payload." } };
   }
 
@@ -55,11 +56,19 @@ export async function provisionOneNoteTemplate(
   } else if (templateGroupId) {
     source = { kind: "group", groupId: templateGroupId, notebookName };
   } else {
+    context.warn(
+      "No template source configured. Set templateSiteUrl/templateGroupId in the webhook URL or DEFAULT_TEMPLATE_SITE_URL/DEFAULT_TEMPLATE_GROUP_ID in the app settings."
+    );
     return {
       status: 400,
       jsonBody: { error: "No template source configured. Provide templateSiteUrl or templateGroupId." },
     };
   }
+
+  context.log(
+    `Copying into group ${targetGroupId} from ${source.kind} source`,
+    JSON.stringify({ notebookName, templateSectionNames, targetSectionNames })
+  );
 
   try {
     const token = await getGraphAccessToken();
