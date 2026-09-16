@@ -1,216 +1,246 @@
 # EasyLife 365 OneNote Template Function
 
-Azure Function in Node.js/TypeScript, die nach der Bereitstellung einer EasyLife 365 Team-/Gruppen-Automation eine OneNote-Vorlage in das Notizbuch der neuen Gruppe kopiert.
+Diese Azure Function kopiert OneNote-Vorlagen automatisch in das neue OneNote-Notizbuch, das EasyLife 365 beim Erstellen einer Microsoft-365-Gruppe oder eines Teams anlegt.
 
-Beispiel: Eine Section namens `Traktandenliste` mit allen darin enthaltenen Seiten wird aus einer Vorlage in die neue Gruppe kopiert.
+Die Vorlage kann in einer SharePoint-Site oder in einer Microsoft-365-Gruppe liegen. Es können eine oder mehrere Sections inklusive ihrer Seiten kopiert werden. Die Zielgruppe muss nicht vorher bekannt sein: EasyLife sendet ihre ID nach der Bereitstellung an den Webhook.
 
 **Autoren:** Andy Bui, uniQconsulting ag
 
-## Funktionsweise
+## Was wird benötigt?
 
-1. EasyLife 365 erstellt eine neue Microsoft 365-Gruppe beziehungsweise ein Team.
-2. EasyLife ruft den HTTP-Webhook dieser Function auf.
-3. Azure Functions prüft den Function Key.
-4. Die Function liest die Gruppen-ID aus dem EasyLife-Payload.
-5. Die Function sucht die gewünschte Vorlage-Section im OneNote-Notizbuch der Vorlagen-Gruppe.
-6. Die Ziel-Section wird im Standard-Notizbuch der neuen Gruppe angelegt, falls sie noch nicht existiert.
-7. Jede Vorlagenseite wird inklusive ihres XHTML-Inhalts in die Ziel-Section kopiert.
-
-## Voraussetzungen
-
+- Microsoft-365-Tenant mit einer OneNote-Vorlage
 - Azure-Abonnement
-- Azure Function App mit Node.js und dem Node.js v4 Programming Model
-- Microsoft Entra App-Registrierung für den Zugriff der Function auf Microsoft Graph
-- EasyLife 365 mit einer Automation für Team-/Gruppenbereitstellung
-- Node.js LTS und Azure Functions Core Tools für lokale Entwicklung
-- Ein OneNote-Notizbuch mit der gewünschten Vorlage
+- GitHub-Konto
+- EasyLife 365 mit Berechtigung zum Erstellen einer Team-/Gruppen-Automation
+- Azure Function App mit Node.js auf Flex Consumption oder einem anderen unterstützten Plan
+- eine Microsoft-Entra-App-Registrierung für Microsoft Graph
 
-## Lokale Entwicklung
+## Schnellstart
+
+1. Dieses Repository auf GitHub forken.
+2. Im Fork unter **Settings → Secrets and variables → Actions** die drei Azure-Deployment-Secrets eintragen.
+3. Im Azure Portal eine Function App mit GitHub Deployment Center verbinden oder den vorhandenen Workflow verwenden.
+4. Die Microsoft-Graph-App-Registrierung und Function-App-Einstellungen konfigurieren.
+5. Einen Function Key erzeugen.
+6. In EasyLife einen aktiven OneNote-Automation-Step mit Webhook anlegen.
+7. Eine Testgruppe provisionieren und das neue OneNote prüfen.
+
+## 1. Repository forken
+
+Öffne dieses Repository auf GitHub und wähle **Fork**. Verwende anschliessend deinen eigenen Fork als Quelle für das Deployment. Die weiteren Schritte beziehen sich auf den Fork, nicht auf das Original-Repository.
+
+Lokal ist kein Klonen erforderlich. Falls du lokal arbeiten möchtest:
+
+```powershell
+git clone https://github.com/<organisation-oder-benutzer>/<dein-fork>.git
+cd easylife-onenote-extension
+npm install
+npm run build
+```
+
+## 2. Azure Function App erstellen
+
+Erstelle im Azure Portal eine Function App mit diesen Eckdaten:
+
+- Runtime stack: **Node.js**
+- Node-Version: **22 LTS** oder eine vom Repository unterstützte LTS-Version
+- Region: nach deiner Umgebung
+- Hosting: **Flex Consumption** ist möglich und benötigt OIDC-Deployment
+- Betriebssystem: Linux
+
+Danach öffnest du **Deployment Center** und verbindest die Function App mit deinem GitHub-Fork:
+
+1. Source: **GitHub**
+2. Organisation oder Benutzer auswählen
+3. Repository auswählen
+4. Branch: `main`
+5. Build provider: **GitHub Actions**
+6. Für Flex Consumption: **User-assigned identity** beziehungsweise OIDC verwenden
+
+Azure erzeugt dabei normalerweise einen Workflow unter `.github/workflows/`. Dieser muss `azure/login@v2` mit OIDC verwenden. Der Workflow braucht die Berechtigung:
+
+```yaml
+permissions:
+  id-token: write
+  contents: read
+```
+
+Ein Publish Profile ist für Flex Consumption nicht geeignet, weil dort Kudu und ZipDeploy nicht verfügbar sind.
+
+### GitHub Deployment Secrets
+
+Der Workflow verwendet diese drei Secrets. Azure Deployment Center kann sie beim Verbinden automatisch anlegen. Falls du den Workflow manuell einrichtest, müssen sie im Fork unter **Settings → Secrets and variables → Actions** exakt so vorhanden sein:
+
+| Secret | Inhalt |
+|---|---|
+| `AZURE_CLIENT_ID` | Client-ID der Deployment-Identität |
+| `AZURE_TENANT_ID` | ID des Microsoft-Entra-Tenants |
+| `AZURE_SUBSCRIPTION_ID` | ID des Azure-Abonnements |
+
+Die Deployment-Identität benötigt auf der Function App mindestens **Contributor** oder **Website Contributor**. Zusätzlich muss eine Federated Credential für deinen Fork und den Branch `main` existieren.
+
+## 3. Microsoft Graph konfigurieren
+
+Die Function benötigt eine separate Microsoft-Entra-App-Registrierung für Microsoft Graph. Die bestehende EasyLife-App-Registrierung wird für den Webhook mit Function Key nicht benötigt.
+
+In **API permissions** → **Add a permission** → **Microsoft Graph** → **Application permissions** hinzufügen:
+
+- `Notes.ReadWrite.All`
+- `Group.ReadWrite.All`
+- `Sites.Read.All` für Vorlagen in SharePoint-Sites
+
+Danach unbedingt **Grant admin consent** für den Tenant ausführen.
+
+Unter **Certificates & secrets** ein Client Secret erstellen. Den Secret-Wert direkt kopieren; er wird später nicht erneut vollständig angezeigt.
+
+## 4. Function App konfigurieren
+
+In Azure: **Function App → Settings → Environment variables**. Diese Werte als Application Settings eintragen:
+
+| Einstellung | Wert |
+|---|---|
+| `FUNCTIONS_WORKER_RUNTIME` | `node` |
+| `GRAPH_TENANT_ID` | Tenant-ID des Microsoft-365-Tenants |
+| `GRAPH_CLIENT_ID` | Client-ID der Graph-App-Registrierung |
+| `GRAPH_CLIENT_SECRET` | Client-Secret der Graph-App-Registrierung |
+
+### Vorlage aus einer SharePoint-Site
+
+Für die Vorlage aus `https://<tenant>.sharepoint.com/sites/<site>`:
+
+| Einstellung | Wert |
+|---|---|
+| `DEFAULT_TEMPLATE_SITE_URL` | Vollständige SharePoint-Site-URL |
+| `DEFAULT_TEMPLATE_NOTEBOOK_NAME` | Name des OneNote-Notizbuchs, z. B. `Vorlage` |
+| `DEFAULT_TEMPLATE_SECTION_NAMES` | Optional, kommagetrennt; leer bedeutet alle Sections |
+| `DEFAULT_TARGET_SECTION_NAMES` | Optional, kommagetrennt; leer verwendet die Originalnamen |
+
+Beispiel:
+
+```text
+DEFAULT_TEMPLATE_SITE_URL=https://uniqconsultingch.sharepoint.com/sites/T-int-M365
+DEFAULT_TEMPLATE_NOTEBOOK_NAME=Vorlage
+DEFAULT_TEMPLATE_SECTION_NAMES=Besprechungen,Dokumentation
+DEFAULT_TARGET_SECTION_NAMES=Besprechungen,Dokumentation
+```
+
+### Vorlage aus einer Microsoft-365-Gruppe
+
+Alternativ kann eine Vorlagen-Gruppe verwendet werden:
+
+| Einstellung | Wert |
+|---|---|
+| `DEFAULT_TEMPLATE_GROUP_ID` | Gruppen-ID der Vorlagen-Gruppe |
+| `DEFAULT_TEMPLATE_NOTEBOOK_NAME` | Optionaler Name des Vorlage-Notizbuchs |
+| `DEFAULT_TEMPLATE_SECTION_NAMES` | Optional, kommagetrennt |
+| `DEFAULT_TARGET_SECTION_NAMES` | Optional, kommagetrennt |
+
+Die Vorlagen-Einstellungen dürfen leer bleiben, wenn sie vollständig in der Webhook-URL übergeben werden.
+
+## 5. Webhook in EasyLife einrichten
+
+In EasyLife 365 einen Automation Step vom Typ **Team & Group** öffnen oder erstellen und zu **OneNote** wechseln:
+
+1. **OneNote** aktivieren.
+2. Unter **Sections** mindestens eine Section definieren, zum Beispiel `Besprechungen`. Diese Section wird von EasyLife im neuen Notizbuch angelegt.
+3. Unter **Naming** die Standard-Notebook-Bereitstellung aktiviert lassen.
+4. Unter **Webhook** **Notify via webhook** aktivieren.
+5. Bei **Authentication** **Code authentication** wählen.
+6. Den Function Key bei **Authentication code** eintragen.
+7. Den Automation Step mit **Activate and save** aktivieren und speichern.
+
+Die Webhook-URL lautet:
+
+```text
+https://<function-app-name>.azurewebsites.net/api/onenote-template
+```
+
+Die Authentifizierung wird über das Feld **Authentication code** an EasyLife übergeben. Falls deine EasyLife-Version den Code nicht als Header sendet, kann der Key alternativ in der URL stehen:
+
+```text
+https://<function-app-name>.azurewebsites.net/api/onenote-template?code=<function-key>
+```
+
+Den Function Key findest du unter **Function App → Functions → provisionOneNoteTemplate → Function keys**.
+
+### Vorlage pro Automation auswählen
+
+Query-Parameter in der Webhook-URL überschreiben die Application Settings. Für ein SharePoint-Notebook `Vorlage`:
+
+```text
+https://<function-app-name>.azurewebsites.net/api/onenote-template?templateSiteUrl=https%3A%2F%2Fcontoso.sharepoint.com%2Fsites%2FT-int-M365&templateNotebookName=Vorlage&templateSectionName=Besprechungen&targetSectionName=Besprechungen
+```
+
+Für alle Sections das Feld `templateSectionName` weglassen:
+
+```text
+https://<function-app-name>.azurewebsites.net/api/onenote-template?templateSiteUrl=https%3A%2F%2Fcontoso.sharepoint.com%2Fsites%2FT-int-M365&templateNotebookName=Vorlage
+```
+
+Für mehrere Sections:
+
+```text
+...&templateSectionName=Besprechungen,Dokumentation,Traktandenliste
+```
+
+Das Ziel wird nicht in der URL konfiguriert. EasyLife sendet die neue Gruppen-ID nach der Bereitstellung im Payload, normalerweise unter `group.id`.
+
+## 6. Testen
+
+1. Prüfe, dass das Vorlage-Notizbuch existiert und die Vorlage-Sections mindestens eine Seite enthalten.
+2. Prüfe, dass die Graph-App Admin Consent erhalten hat.
+3. Prüfe, dass die Function App deployed und die Application Settings gespeichert sind.
+4. Speichere den EasyLife-Step mit **Activate and save**.
+5. Provisioniere eine Testgruppe.
+6. Azure Portal: **Function App → Functions → provisionOneNoteTemplate → Invocations** öffnen.
+7. Prüfe den HTTP-Ergebniscode und die kopierten Seiten im Ziel-OneNote.
+
+Ein erfolgreicher Aufruf sieht ungefähr so aus:
+
+```json
+{
+  "status": "ok",
+  "pagesCopied": 3,
+  "sections": [
+    { "from": "Besprechungen", "to": "Besprechungen", "pagesCopied": 3 }
+  ]
+}
+```
+
+## Fehlerbehebung
+
+| Ergebnis | Ursache oder Lösung |
+|---|---|
+| `401` | Function Key fehlt oder ist falsch. In EasyLife **Code authentication** und den aktuellen Function Key verwenden. |
+| `400` | EasyLife-Payload enthält keine Gruppen-ID oder es fehlt `templateSiteUrl` beziehungsweise `templateGroupId`. |
+| `403` | Graph-App fehlt die passende Application Permission oder Admin Consent. Für SharePoint zusätzlich `Sites.Read.All` prüfen. |
+| Notebook bleibt leer | In den Function-Aufrufen den Ergebniscode und die Fehlermeldung prüfen. Bei `200` auch das richtige Ziel-Notebook kontrollieren. |
+| `404`/`405` bei Kudu oder ZipDeploy | Publish Profile wurde verwendet. Bei Flex Consumption OIDC mit `azure/login@v2` verwenden. |
+| Section nicht gefunden | Exakten Section-Namen aus dem Vorlage-Notebook verwenden. Bei fehlendem Namen kopiert die Function alle Sections. |
+
+EasyLife kann einen fehlgeschlagenen Webhook mehrfach wiederholen. Mehrere identische Fehlermeldungen kurz nacheinander sind daher möglich.
+
+## Sicherheit
+
+- Niemals Client Secrets, Function Keys oder GitHub Secrets in Git, README-Dateien oder Screenshots speichern.
+- `local.settings.json` ist lokal und wird durch `.gitignore` nicht versioniert.
+- Für produktive Umgebungen Secrets regelmässig erneuern oder Zertifikate beziehungsweise Managed Identity verwenden.
+- Die Function kopiert nur in die neu von EasyLife gemeldete Zielgruppe; diese ID wird nicht vorher konfiguriert.
+
+## Entwicklung
 
 ```powershell
 npm install
 npm run build
 ```
 
-Für die lokale Ausführung werden Azure Functions Core Tools und gegebenenfalls Azurite für `AzureWebJobsStorage` benötigt:
+Für die lokale Ausführung mit Azure Functions Core Tools:
 
 ```powershell
 func start
 ```
 
-Die lokale Datei `local.settings.json` ist absichtlich in `.gitignore` eingetragen. Sie darf keine Secrets in Git enthalten.
-
-## Microsoft Graph App-Registrierung
-
-Die Function verwendet den Client-Credentials-Flow und ruft Microsoft Graph mit einer eigenen App-Identität auf. Die bestehende EasyLife-App-Registrierung ist für diese Webhook-Variante nicht erforderlich.
-
-In der App-Registrierung unter **API permissions** sind als **Application permissions** mindestens die für den verwendeten Graph-Zugriff erforderlichen OneNote-/Gruppenberechtigungen zu konfigurieren. Für dieses Projekt sind vorgesehen:
-
-- `Notes.ReadWrite.All`
-- `Group.ReadWrite.All`
-
-Danach muss ein Administrator **Grant admin consent** für den Tenant erteilen.
-
-Unter **Certificates & secrets** wird ein Client Secret erstellt. Der Secret-Wert wird nur einmal angezeigt und muss sicher gespeichert werden.
-
-> Für den produktiven Betrieb sollte statt eines langlebigen Client Secrets nach Möglichkeit eine sicher verwaltete Identität beziehungsweise ein Zertifikat verwendet werden. Die konkrete Möglichkeit hängt vom gewählten Azure-Hosting und der Tenant-Konfiguration ab.
-
-## Azure Function App konfigurieren
-
-Unter **Function App → Settings → Environment variables** beziehungsweise **Configuration → Application settings** müssen folgende Einstellungen hinterlegt werden:
-
-| Einstellung | Wert |
-|---|---|
-| `FUNCTIONS_WORKER_RUNTIME` | `node` |
-| `GRAPH_TENANT_ID` | Microsoft-Entra-Tenant-ID des Microsoft-365-Tenants |
-| `GRAPH_CLIENT_ID` | Application (client) ID der Graph-App-Registrierung |
-| `GRAPH_CLIENT_SECRET` | Client-Secret-Wert der Graph-App-Registrierung |
-| `DEFAULT_TEMPLATE_GROUP_ID` | Gruppen-ID der Gruppe, in deren OneNote die Vorlage liegt |
-| `DEFAULT_TEMPLATE_SECTION_NAME` | Standardmässig `Traktandenliste` |
-| `DEFAULT_TARGET_SECTION_NAME` | Standardmässig `Traktandenliste` |
-
-Nach Änderungen an Application Settings die Function App neu starten, falls Azure dies nicht automatisch erledigt.
-
-## Webhook in EasyLife 365
-
-In der EasyLife-Automation unter **OneNote**:
-
-1. **Notify via webhook** aktivieren.
-2. Bei **Authentication** die Option **Code authentication** wählen.
-3. Die URL der Function mit Function Key eintragen:
-
-```text
-https://<function-app-name>.azurewebsites.net/api/onenote-template?code=<function-key>
-```
-
-Den Function Key erhält man unter:
-
-**Function App → Functions → provisionOneNoteTemplate → Function keys**
-
-Der Key kann alternativ als HTTP-Header `x-functions-key` übermittelt werden. Der Key ist ein Secret und darf nicht in öffentlichen Dokumenten, Screenshots oder Git committed werden.
-
-## Dynamische Vorlagen
-
-Die Vorlage kann pro EasyLife-Webhook über Query-Parameter ausgewählt werden. Dadurch können mehrere Automationen unterschiedliche Vorlagen verwenden:
-
-```text
-https://<function-app-name>.azurewebsites.net/api/onenote-template?code=<function-key>&templateGroupId=<template-group-id>&templateSectionName=Traktandenliste&targetSectionName=Traktandenliste
-```
-
-Unterstützte Parameter:
-
-- `templateGroupId`: Gruppen-ID der Vorlagen-Gruppe
-- `templateSectionName`: Name der Vorlagen-Section
-- `targetSectionName`: Name der Section in der neuen Gruppe
-
-Wenn Parameter fehlen, verwendet die Function die Werte aus den Application Settings.
-
-## EasyLife-Payload prüfen
-
-Die Function erwartet die neue Gruppen-ID in einem der folgenden Felder:
-
-- `groupId`
-- `id`
-- `resourceId`
-- `group.id`
-
-Der rohe Payload wird beim ersten Testaufruf im Application-Insights- beziehungsweise Function-Log protokolliert. Falls EasyLife ein anderes Feld verwendet, muss `extractGroupId()` in [src/functions/provisionOneNoteTemplate.ts](src/functions/provisionOneNoteTemplate.ts) angepasst werden.
-
-Für einen erfolgreichen Aufruf antwortet die Function beispielsweise:
-
-```json
-{
-  "status": "ok",
-  "pagesCopied": 3
-}
-```
-
-## Testablauf
-
-1. Prüfen, dass das Vorlagen-Notizbuch existiert und die gewünschte Section exakt benannt ist.
-2. Graph-App-Registrierung und Admin Consent prüfen.
-3. Application Settings der Function App hinterlegen.
-4. Function-Key-URL in EasyLife eintragen.
-5. Eine Test-Gruppe über EasyLife bereitstellen.
-6. Im Function-Log prüfen, ob die Gruppen-ID erkannt wurde.
-7. Das OneNote-Notizbuch der neuen Gruppe öffnen und die kopierte Section sowie ihre Seiten prüfen.
-
-## GitHub-Deployment
-
-Dieses Repository ist für die Bereitstellung aus GitHub vorgesehen. Der Produktionsbranch ist `main`.
-
-Nach der Konfiguration von **Deployment Center** der Azure Function App mit diesem Repository wird bei Pushes auf `main` automatisch deployt:
-
-```powershell
-git add .
-git commit -m "Describe the change"
-git push origin main
-```
-
-Die Secrets und Application Settings werden nicht aus `local.settings.json` deployt. Sie müssen in Azure separat gepflegt werden.
-
-### Fehler 401 beim Deploy mit `Azure/functions-action`
-
-Wenn der Build erfolgreich ist, der Deploy-Schritt aber bei `ValidateAzureResource` mit einem Fehler wie dem folgenden abbricht, betrifft das normalerweise die SCM-/Kudu-Anmeldung:
-
-```text
-Failed to fetch Kudu App Settings
-https://<function-app>.scm.azurewebsites.net/api/settings
-Unauthorized (CODE: 401)
-```
-
-Mögliche Ursachen sind ein veraltetes Publish Profile oder deaktivierte SCM-Basic-Authentication. In diesem Fall hilft ein neu heruntergeladenes Publish Profile unter **Overview → Download publish profile** und die Option **SCM Basic Auth Publishing Credentials** unter **Configuration → General settings → Platform settings**.
-
-### Fehler 405 und 404 bei Kudu und ZipDeploy
-
-Zeigt das Log dagegen folgendes Muster, liegt es nicht an den Zugangsdaten:
-
-```text
-updateAppSettingViaKudu
-Response with status code 405
-App setting SCM_DO_BUILD_DURING_DEPLOYMENT has not been propagated to Kudu container yet
-...
-zipDeploy
-Not Found (CODE: 404)
-```
-
-Diese Function App läuft dann auf **Flex Consumption**. Dort existieren die Kudu-Endpunkte `/api/settings` und `/api/zipdeploy` nicht, und Publish Profiles beziehungsweise Basic Auth werden nicht unterstützt. Das Deployment muss über Microsoft Entra ID (OIDC) und die ARM-Deployment-API erfolgen.
-
-Der Workflow in diesem Repository verwendet deshalb `azure/login` mit folgenden GitHub Secrets:
-
-| Secret | Inhalt |
-|---|---|
-| `AZURE_CLIENT_ID` | Client ID der Deployment-App-Registrierung beziehungsweise User-assigned Managed Identity |
-| `AZURE_TENANT_ID` | Tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Subscription ID der Function App |
-
-Die Identität benötigt auf der Function App die Rolle **Contributor** oder **Website Contributor** sowie eine Federated Credential für dieses Repository und den Branch `main`.
-
-Am einfachsten wird das im Azure Portal erzeugt: **Function App → Deployment Center → Source: GitHub → Authentication: User-assigned identity**. Azure legt Identität, Rollenzuweisung, Federated Credential und die Secrets automatisch an.
-
-Publish Profile und Function Key sind Geheimnisse. Sie dürfen nicht in Quellcode, README oder Logs gelangen. Ein versehentlich offengelegtes Publish Profile muss in Azure neu generiert werden.
-
-## Projektstruktur
-
-```text
-src/
-  functions/
-    provisionOneNoteTemplate.ts    HTTP-Trigger und EasyLife-Payload
-  services/
-    graphClient.ts                 Microsoft-Graph-Authentifizierung und HTTP-Aufrufe
-    oneNoteTemplateCopier.ts       Lesen und Kopieren der OneNote-Seiten
-  index.ts                         Registrierung der Functions
-host.json                          Azure-Functions-Laufzeitkonfiguration
-package.json                       Abhängigkeiten und Scripts
-local.settings.json                lokale Einstellungen, nicht versionieren
-```
-
-## Hinweise und Grenzen
-
-- Die Vorlage wird aktuell seitenweise kopiert. Anhänge oder bestimmte eingebettete Inhalte können je nach OneNote-/Graph-XHTML-Repräsentation spezielle Behandlung benötigen.
-- Die Seiten werden in der Reihenfolge der Graph-Antwort kopiert; eine garantierte Reihenfolge sollte bei Bedarf separat implementiert und getestet werden.
-- Wird die Ziel-Section bereits gefunden, werden die Seiten zusätzlich eingefügt. Für wiederholte Webhook-Aufrufe kann dadurch Duplikation entstehen.
-- Die Function wartet synchron auf das Kopieren aller Seiten. Bei sehr grossen Notizbüchern oder vielen Seiten sollte der Prozess auf eine Queue beziehungsweise Durable Function umgestellt werden.
+Die HTTP-Function ist in [src/functions/provisionOneNoteTemplate.ts](src/functions/provisionOneNoteTemplate.ts) definiert. Die Graph- und OneNote-Logik befindet sich in [src/services](src/services).
 
 ## Lizenz und Eigentum
 
