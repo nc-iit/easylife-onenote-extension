@@ -1,7 +1,7 @@
 import { graphFetch } from "./graphClient";
 
 // The OneNote API rejects app-only tokens (Graph error 40001), so sections are copied as
-// the underlying .one files from the SharePoint "Site Assets" library instead.
+// the underlying .one files through the SharePoint Drive API instead.
 
 export type TemplateSource =
   | { kind: "site"; siteUrl: string; notebookName?: string }
@@ -25,6 +25,13 @@ interface DriveItem {
   name: string;
   folder?: { childCount?: number };
   file?: { mimeType?: string };
+}
+
+interface NotebookLocation {
+  driveId: string;
+  driveName: string;
+  folderId: string;
+  folderName: string;
 }
 
 const SECTION_EXTENSION = ".one";
@@ -68,19 +75,13 @@ async function resolveSiteId(source: TemplateSource, token: string): Promise<str
     : resolveSiteIdFromGroup(source.groupId, token);
 }
 
-/** OneNote notebooks live in the "Site Assets" document library of a SharePoint site. */
-async function getSiteAssetsDriveId(siteId: string, token: string): Promise<string> {
+async function listDrives(siteId: string, token: string): Promise<{ id: string; name: string }[]> {
   const body = await getJson<{ value: { id: string; name: string }[] }>(
     `/sites/${siteId}/drives?$select=id,name`,
     token,
     `Listing document libraries of site ${siteId}`
   );
-  const drive = body.value.find((d) => /site\s*assets/i.test(d.name));
-  if (!drive) {
-    const available = body.value.map((d) => d.name).join(", ") || "none";
-    throw new Error(`No "Site Assets" library found. Available libraries: ${available}`);
-  }
-  return drive.id;
+  return body.value;
 }
 
 async function listChildren(driveId: string, itemPath: string, token: string): Promise<DriveItem[]> {
@@ -92,53 +93,69 @@ async function listChildren(driveId: string, itemPath: string, token: string): P
   return body.value;
 }
 
-/** Finds the notebook folder by name, or the only folder that actually contains a notebook. */
-async function findNotebookFolder(
-  driveId: string,
+function isNotebookFolder(children: DriveItem[]): boolean {
+  return children.some((c) => c.name.toLowerCase().endsWith(NOTEBOOK_MARKER_EXTENSION));
+}
+
+async function findNotebookInDrive(
+  drive: { id: string; name: string },
   notebookName: string | undefined,
   token: string
-): Promise<DriveItem> {
-  const rootItems = await listChildren(driveId, "root/children", token);
-  const folders = rootItems.filter((item) => item.folder);
+): Promise<NotebookLocation | undefined> {
+  const folders = (await listChildren(drive.id, "root/children", token)).filter((item) => item.folder);
+  const candidates = notebookName
+    ? folders.filter((f) => normalizeName(f.name) === normalizeName(notebookName))
+    : folders;
 
-  if (notebookName) {
-    const match = folders.find((f) => normalizeName(f.name) === normalizeName(notebookName));
-    if (!match) {
-      const available = folders.map((f) => f.name).join(", ") || "none";
-      throw new Error(`Notebook "${notebookName}" not found. Available folders: ${available}`);
-    }
-    return match;
-  }
-
-  for (const folder of folders) {
-    const children = await listChildren(driveId, `items/${folder.id}/children`, token);
-    if (children.some((c) => c.name.toLowerCase().endsWith(NOTEBOOK_MARKER_EXTENSION))) {
-      return folder;
+  for (const folder of candidates) {
+    const children = await listChildren(drive.id, `items/${folder.id}/children`, token);
+    if (isNotebookFolder(children)) {
+      return { driveId: drive.id, driveName: drive.name, folderId: folder.id, folderName: folder.name };
     }
   }
+  return undefined;
+}
 
-  const available = folders.map((f) => f.name).join(", ") || "none";
-  throw new Error(`No OneNote notebook found in Site Assets. Available folders: ${available}`);
+/** Notebooks may live in any document library of the site, not only in "Site Assets". */
+async function findNotebook(
+  siteId: string,
+  notebookName: string | undefined,
+  token: string
+): Promise<NotebookLocation> {
+  const drives = await listDrives(siteId, token);
+  // "Site Assets" holds notebooks in most tenants, so check it first.
+  const ordered = [...drives].sort((a, b) => Number(/site\s*assets/i.test(b.name)) - Number(/site\s*assets/i.test(a.name)));
+
+  for (const drive of ordered) {
+    const found = await findNotebookInDrive(drive, notebookName, token);
+    if (found) {
+      return found;
+    }
+  }
+
+  const libraries = drives.map((d) => d.name).join(", ") || "none";
+  throw new Error(
+    `Notebook ${notebookName ? `"${notebookName}" ` : ""}not found in site ${siteId}. Libraries searched: ${libraries}`
+  );
 }
 
 async function copySectionFile(
-  sourceDriveId: string,
-  sourceItemId: string,
-  targetDriveId: string,
-  targetFolderId: string,
+  source: NotebookLocation,
+  sectionItemId: string,
+  target: NotebookLocation,
   newName: string,
   token: string
 ): Promise<void> {
-  const response = await graphFetch(`/drives/${sourceDriveId}/items/${sourceItemId}/copy`, token, {
+  const response = await graphFetch(`/drives/${source.driveId}/items/${sectionItemId}/copy`, token, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      parentReference: { driveId: targetDriveId, id: targetFolderId },
+      parentReference: { driveId: target.driveId, id: target.folderId },
       name: newName.toLowerCase().endsWith(SECTION_EXTENSION) ? newName : `${newName}${SECTION_EXTENSION}`,
     }),
   });
 
-  // Graph answers 202 Accepted and finishes the copy asynchronously.
+  // Graph answers 202 Accepted and completes the copy asynchronously.
   if (!response.ok && response.status !== 202) {
     throw new Error(`Copying section "${newName}" failed: ${response.status} ${await response.text()}`);
   }
@@ -149,20 +166,14 @@ export async function copyTemplateSectionsToGroup(options: CopyTemplateOptions):
   const { token, source, sections, targetGroupId } = options;
 
   const sourceSiteId = await resolveSiteId(source, token);
-  const sourceDriveId = await getSiteAssetsDriveId(sourceSiteId, token);
-  const sourceNotebook = await findNotebookFolder(sourceDriveId, source.notebookName, token);
-  const sourceSections = (await listChildren(sourceDriveId, `items/${sourceNotebook.id}/children`, token)).filter(
-    (item) => item.file && item.name.toLowerCase().endsWith(SECTION_EXTENSION)
-  );
+  const sourceNotebook = await findNotebook(sourceSiteId, source.notebookName, token);
+  const sourceSections = (await listChildren(sourceNotebook.driveId, `items/${sourceNotebook.folderId}/children`, token))
+    .filter((item) => item.file && item.name.toLowerCase().endsWith(SECTION_EXTENSION));
 
   const targetSiteId = await resolveSiteIdFromGroup(targetGroupId, token);
-  const targetDriveId = await getSiteAssetsDriveId(targetSiteId, token);
-  const targetNotebook = await findNotebookFolder(targetDriveId, undefined, token);
+  const targetNotebook = await findNotebook(targetSiteId, undefined, token);
 
-  const mappings = sections.length
-    ? sections
-    : sourceSections.map((s) => ({ from: s.name, to: s.name }));
-
+  const mappings = sections.length ? sections : sourceSections.map((s) => ({ from: s.name, to: s.name }));
   const copied: { from: string; to: string }[] = [];
 
   for (const mapping of mappings) {
@@ -172,13 +183,13 @@ export async function copyTemplateSectionsToGroup(options: CopyTemplateOptions):
       throw new Error(`Template section "${mapping.from}" not found. Available sections: ${available}`);
     }
 
-    await copySectionFile(sourceDriveId, sourceSection.id, targetDriveId, targetNotebook.id, mapping.to, token);
+    await copySectionFile(sourceNotebook, sourceSection.id, targetNotebook, mapping.to, token);
     copied.push({ from: normalizeName(sourceSection.name), to: normalizeName(mapping.to) });
   }
 
   return {
     sectionsCopied: copied,
-    templateNotebook: sourceNotebook.name,
-    targetNotebook: targetNotebook.name,
+    templateNotebook: `${sourceNotebook.driveName}/${sourceNotebook.folderName}`,
+    targetNotebook: `${targetNotebook.driveName}/${targetNotebook.folderName}`,
   };
 }
