@@ -98,7 +98,7 @@ async function listDrives(siteId: string, token: string): Promise<{ id: string; 
     `Listing lists of site ${siteId}`
   );
 
-  for (const list of lists.value.filter((l) => l.list?.template === "documentLibrary")) {
+  for (const list of lists.value) {
     try {
       const drive = await getJson<{ id: string; name?: string }>(
         `/sites/${siteId}/lists/${list.id}/drive?$select=id,name`,
@@ -129,23 +129,36 @@ function isNotebookFolder(children: DriveItem[]): boolean {
   return children.some((c) => c.name.toLowerCase().endsWith(NOTEBOOK_MARKER_EXTENSION));
 }
 
+const MAX_FOLDER_DEPTH = 3;
+
 async function findNotebookInDrive(
   drive: { id: string; name: string },
   notebookName: string | undefined,
-  token: string
+  token: string,
+  inspected: string[]
 ): Promise<NotebookLocation | undefined> {
-  const folders = (await listChildren(drive.id, "root/children", token)).filter((item) => item.folder);
-  const candidates = notebookName
-    ? folders.filter((f) => normalizeName(f.name) === normalizeName(notebookName))
-    : folders;
+  async function walk(folders: DriveItem[], depth: number): Promise<NotebookLocation | undefined> {
+    for (const folder of folders) {
+      const children = await listChildren(drive.id, `items/${folder.id}/children`, token);
+      inspected.push(`${drive.name}/${folder.name}`);
 
-  for (const folder of candidates) {
-    const children = await listChildren(drive.id, `items/${folder.id}/children`, token);
-    if (isNotebookFolder(children)) {
-      return { driveId: drive.id, driveName: drive.name, folderId: folder.id, folderName: folder.name };
+      const nameMatches = !notebookName || normalizeName(folder.name) === normalizeName(notebookName);
+      if (nameMatches && isNotebookFolder(children)) {
+        return { driveId: drive.id, driveName: drive.name, folderId: folder.id, folderName: folder.name };
+      }
+
+      if (depth < MAX_FOLDER_DEPTH) {
+        const nested = await walk(children.filter((c) => c.folder), depth + 1);
+        if (nested) {
+          return nested;
+        }
+      }
     }
+    return undefined;
   }
-  return undefined;
+
+  const rootFolders = (await listChildren(drive.id, "root/children", token)).filter((item) => item.folder);
+  return walk(rootFolders, 1);
 }
 
 /** Notebooks may live in any document library of the site, not only in "Site Assets". */
@@ -157,17 +170,20 @@ async function findNotebook(
   const drives = await listDrives(siteId, token);
   // "Site Assets" holds notebooks in most tenants, so check it first.
   const ordered = [...drives].sort((a, b) => Number(/site\s*assets/i.test(b.name)) - Number(/site\s*assets/i.test(a.name)));
+  const inspected: string[] = [];
 
   for (const drive of ordered) {
-    const found = await findNotebookInDrive(drive, notebookName, token);
+    const found = await findNotebookInDrive(drive, notebookName, token, inspected);
     if (found) {
       return found;
     }
   }
 
   const libraries = drives.map((d) => d.name).join(", ") || "none";
+  const folders = inspected.join(", ") || "none";
   throw new Error(
-    `Notebook ${notebookName ? `"${notebookName}" ` : ""}not found in site ${siteId}. Libraries searched: ${libraries}`
+    `Notebook ${notebookName ? `"${notebookName}" ` : ""}not found in site ${siteId}. ` +
+      `Libraries: ${libraries}. Folders inspected: ${folders}`
   );
 }
 
