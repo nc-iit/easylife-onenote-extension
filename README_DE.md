@@ -180,6 +180,12 @@ Für mehrere Sections:
 ...&templateSectionName=Besprechungen,Dokumentation,Traktandenliste
 ```
 
+Die Teams-Registerkarte eines Kanals ist fest an den Standardabschnitt des Notizbuchs gebunden, dessen Name je nach Tenant-Sprache variiert (`General`, `Allgemein`, ...). Mit `@default` wird genau dieser Abschnitt überschrieben, damit die Vorlage dort erscheint, wo Anwender zuerst hinschauen:
+
+```text
+...&templateSectionName=Vorlage&targetSectionName=@default
+```
+
 Das Ziel wird nicht in der URL konfiguriert. EasyLife sendet die neue Gruppen-ID nach der Bereitstellung im Payload, normalerweise unter `group.id`.
 
 ## 6. Testen

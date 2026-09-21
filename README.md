@@ -182,6 +182,12 @@ To copy multiple sections:
 ...&templateSectionName=Meetings,Documentation,Agenda
 ```
 
+The Teams channel tab is pinned to the notebook's default section, which is named differently per tenant language (`General`, `Allgemein`, ...). Use `@default` to overwrite exactly that section, so the template appears where users look first:
+
+```text
+...&templateSectionName=Meetings&targetSectionName=@default
+```
+
 The target group is not configured in the URL. EasyLife sends the new group ID after provisioning, normally under `group.id`.
 
 ## 6. Test the Installation
