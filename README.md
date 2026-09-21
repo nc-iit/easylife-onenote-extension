@@ -212,12 +212,28 @@ A successful response looks like this:
 |---|---|
 | `401` | The Function key is missing or incorrect. Select **Code authentication** in EasyLife and use the current key. |
 | `400` | The EasyLife payload has no group ID, or `templateSiteUrl` / `templateGroupId` is missing. |
-| `403` | The Graph app is missing an Application permission or admin consent. For SharePoint, also check `Sites.Read.All`. |
-| Notebook is empty | Check the invocation result and error message. If the response is `200`, verify that you opened the expected target notebook. |
-| `404`/`405` from Kudu or ZipDeploy | A Publish Profile was used. For Flex Consumption, use OIDC with `azure/login@v2`. |
-| Section not found | Use the exact section name from the template notebook. If no section is specified, the Function copies all sections. |
+| `403` | The Graph app is missing `Sites.ReadWrite.All` or admin consent. |
+| `Notebook "..." not found` | Use the **notebook** name, not the section name. The error lists every library and folder that was inspected. |
+| Section not found | Use the exact section name from the template notebook. If no section is specified, all sections are copied. |
+| Sections do not appear in OneNote | See below. |
 
-EasyLife may retry a failed webhook several times. Multiple identical errors close together can therefore be expected.
+### Sections do not appear in OneNote
+
+The function copies section files into the notebook folder. OneNote only adds them to its table of contents (`.onetoc2`) when the notebook is opened and synchronised, so newly copied sections can take a moment to show up.
+
+Check the invocation result first. `filesInTargetNotebook` lists what is physically present in the target folder:
+
+```json
+{ "filesInTargetNotebook": ["Open Notebook.onetoc2", "Vorlage.one"] }
+```
+
+If the `.one` files are listed, the copy worked and the issue is OneNote indexing:
+
+1. Close the notebook in Teams and open it again.
+2. Open the notebook once in the OneNote desktop app, which forces a folder rescan.
+3. In SharePoint, open **Site Assets → &lt;group&gt; Notebook** to confirm the files are there.
+
+EasyLife may retry a failed webhook several times, so repeated identical errors are expected.
 
 ## Security
 

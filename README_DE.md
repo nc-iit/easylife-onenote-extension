@@ -210,12 +210,28 @@ Ein erfolgreicher Aufruf sieht ungefähr so aus:
 |---|---|
 | `401` | Function Key fehlt oder ist falsch. In EasyLife **Code authentication** und den aktuellen Function Key verwenden. |
 | `400` | EasyLife-Payload enthält keine Gruppen-ID oder es fehlt `templateSiteUrl` beziehungsweise `templateGroupId`. |
-| `403` | Graph-App fehlt die passende Application Permission oder Admin Consent. Für SharePoint zusätzlich `Sites.Read.All` prüfen. |
-| Notebook bleibt leer | In den Function-Aufrufen den Ergebniscode und die Fehlermeldung prüfen. Bei `200` auch das richtige Ziel-Notebook kontrollieren. |
-| `404`/`405` bei Kudu oder ZipDeploy | Publish Profile wurde verwendet. Bei Flex Consumption OIDC mit `azure/login@v2` verwenden. |
-| Section nicht gefunden | Exakten Section-Namen aus dem Vorlage-Notebook verwenden. Bei fehlendem Namen kopiert die Function alle Sections. |
+| `403` | Der Graph-App fehlt `Sites.ReadWrite.All` oder der Admin Consent. |
+| `Notebook "..." not found` | Name des **Notizbuchs** verwenden, nicht den des Abschnitts. Die Fehlermeldung listet alle geprüften Bibliotheken und Ordner auf. |
+| Section nicht gefunden | Exakten Abschnittsnamen aus dem Vorlage-Notizbuch verwenden. Ohne Angabe werden alle Abschnitte kopiert. |
+| Abschnitte erscheinen nicht in OneNote | Siehe unten. |
 
-EasyLife kann einen fehlgeschlagenen Webhook mehrfach wiederholen. Mehrere identische Fehlermeldungen kurz nacheinander sind daher möglich.
+### Abschnitte erscheinen nicht in OneNote
+
+Die Function kopiert Abschnittsdateien in den Notizbuch-Ordner. OneNote nimmt sie erst in sein Inhaltsverzeichnis (`.onetoc2`) auf, wenn das Notizbuch geöffnet und synchronisiert wird. Neu kopierte Abschnitte können daher verzögert erscheinen.
+
+Prüfe zuerst das Aufrufergebnis. `filesInTargetNotebook` zeigt, was physisch im Zielordner liegt:
+
+```json
+{ "filesInTargetNotebook": ["Open Notebook.onetoc2", "Vorlage.one"] }
+```
+
+Sind die `.one`-Dateien aufgeführt, hat das Kopieren funktioniert und es liegt an der OneNote-Indizierung:
+
+1. Notizbuch in Teams schliessen und erneut öffnen.
+2. Notizbuch einmal in der OneNote-Desktop-App öffnen; das erzwingt einen erneuten Scan des Ordners.
+3. In SharePoint unter **Site Assets → &lt;Gruppe&gt; Notebook** prüfen, ob die Dateien vorhanden sind.
+
+EasyLife wiederholt fehlgeschlagene Webhooks mehrfach; identische Fehlermeldungen kurz nacheinander sind daher normal.
 
 ## Sicherheit
 

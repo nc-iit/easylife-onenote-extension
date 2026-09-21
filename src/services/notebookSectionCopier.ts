@@ -18,6 +18,7 @@ export interface CopyTemplateResult {
   sectionsCopied: { from: string; to: string }[];
   templateNotebook: string;
   targetNotebook: string;
+  filesInTargetNotebook: string[];
 }
 
 interface DriveItem {
@@ -256,6 +257,25 @@ async function waitForProvisioned<T>(what: string, resolve: () => Promise<T>): P
   );
 }
 
+/** Graph reports copy progress on an unauthenticated monitor URL. */
+async function waitForCopyToFinish(monitorUrl: string): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const response = await fetch(monitorUrl);
+    if (!response.ok) {
+      return;
+    }
+
+    const status = (await response.json()) as { status?: string; error?: unknown };
+    if (status.status === "completed") {
+      return;
+    }
+    if (status.status === "failed") {
+      throw new Error(`Copy failed: ${JSON.stringify(status.error)}`);
+    }
+    await sleep(2000);
+  }
+}
+
 async function copySectionFile(
   source: NotebookLocation,
   sectionItemId: string,
@@ -275,6 +295,11 @@ async function copySectionFile(
   // Graph answers 202 Accepted and completes the copy asynchronously.
   if (!response.ok && response.status !== 202) {
     throw new Error(`Copying section "${newName}" failed: ${response.status} ${await response.text()}`);
+  }
+
+  const monitorUrl = response.headers.get("Location");
+  if (monitorUrl) {
+    await waitForCopyToFinish(monitorUrl);
   }
 }
 
@@ -308,9 +333,14 @@ export async function copyTemplateSectionsToGroup(options: CopyTemplateOptions):
     copied.push({ from: normalizeName(sourceSection.name), to: normalizeName(mapping.to) });
   }
 
+  const filesInTargetNotebook = (
+    await listChildren(targetNotebook.driveId, `items/${targetNotebook.folderId}/children`, token)
+  ).map((item) => item.name);
+
   return {
     sectionsCopied: copied,
     templateNotebook: `${sourceNotebook.driveName}/${sourceNotebook.folderName}`,
     targetNotebook: `${targetNotebook.driveName}/${targetNotebook.folderName}`,
+    filesInTargetNotebook,
   };
 }
