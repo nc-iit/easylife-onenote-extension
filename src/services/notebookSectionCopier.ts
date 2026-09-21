@@ -283,14 +283,33 @@ async function copySectionFile(
   newName: string,
   token: string
 ): Promise<void> {
-  const response = await graphFetch(`/drives/${source.driveId}/items/${sectionItemId}/copy`, token, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      parentReference: { driveId: target.driveId, id: target.folderId },
-      name: newName.toLowerCase().endsWith(SECTION_EXTENSION) ? newName : `${newName}${SECTION_EXTENSION}`,
-    }),
-  });
+  const fileName = newName.toLowerCase().endsWith(SECTION_EXTENSION) ? newName : `${newName}${SECTION_EXTENSION}`;
+
+  async function requestCopy(): Promise<Response> {
+    return graphFetch(`/drives/${source.driveId}/items/${sectionItemId}/copy`, token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        parentReference: { driveId: target.driveId, id: target.folderId },
+        name: fileName,
+        // EasyLife pre-creates empty sections with the same name, so overwrite them.
+        "@microsoft.graph.conflictBehavior": "replace",
+      }),
+    });
+  }
+
+  let response = await requestCopy();
+
+  // Not every drive honours conflictBehavior on copy, so remove the placeholder and retry.
+  if (response.status === 409) {
+    const existing = (await listChildren(target.driveId, `items/${target.folderId}/children`, token)).find(
+      (item) => item.name.toLowerCase() === fileName.toLowerCase()
+    );
+    if (existing) {
+      await graphFetch(`/drives/${target.driveId}/items/${existing.id}`, token, { method: "DELETE" });
+      response = await requestCopy();
+    }
+  }
 
   // Graph answers 202 Accepted and completes the copy asynchronously.
   if (!response.ok && response.status !== 202) {
