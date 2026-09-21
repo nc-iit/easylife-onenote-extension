@@ -1,4 +1,4 @@
-import { graphFetch } from "./graphClient";
+import { graphFetch, sleep } from "./graphClient";
 
 // The OneNote API rejects app-only tokens (Graph error 40001), so sections are copied as
 // the underlying .one files through the SharePoint Drive API instead.
@@ -36,6 +36,10 @@ interface NotebookLocation {
 
 const SECTION_EXTENSION = ".one";
 const NOTEBOOK_MARKER_EXTENSION = ".onetoc2";
+
+// EasyLife fires the webhook before SharePoint has finished provisioning the group notebook.
+const PROVISIONING_ATTEMPTS = 6;
+const PROVISIONING_DELAY_MS = 5000;
 
 function normalizeName(value: string): string {
   return value.trim().replace(/\.one$/i, "").toLowerCase();
@@ -139,6 +143,26 @@ async function findNotebook(
   );
 }
 
+/** Retries while the group's site or notebook is still being provisioned. */
+async function waitForProvisioned<T>(what: string, resolve: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < PROVISIONING_ATTEMPTS; attempt++) {
+    try {
+      return await resolve();
+    } catch (err) {
+      lastError = err;
+      if (attempt < PROVISIONING_ATTEMPTS - 1) {
+        await sleep(PROVISIONING_DELAY_MS);
+      }
+    }
+  }
+
+  throw new Error(
+    `${what} is not available after ${PROVISIONING_ATTEMPTS} attempts: ${(lastError as Error).message}`
+  );
+}
+
 async function copySectionFile(
   source: NotebookLocation,
   sectionItemId: string,
@@ -170,8 +194,12 @@ export async function copyTemplateSectionsToGroup(options: CopyTemplateOptions):
   const sourceSections = (await listChildren(sourceNotebook.driveId, `items/${sourceNotebook.folderId}/children`, token))
     .filter((item) => item.file && item.name.toLowerCase().endsWith(SECTION_EXTENSION));
 
-  const targetSiteId = await resolveSiteIdFromGroup(targetGroupId, token);
-  const targetNotebook = await findNotebook(targetSiteId, undefined, token);
+  const targetSiteId = await waitForProvisioned(`Site of group ${targetGroupId}`, () =>
+    resolveSiteIdFromGroup(targetGroupId, token)
+  );
+  const targetNotebook = await waitForProvisioned(`Notebook of group ${targetGroupId}`, () =>
+    findNotebook(targetSiteId, undefined, token)
+  );
 
   const mappings = sections.length ? sections : sourceSections.map((s) => ({ from: s.name, to: s.name }));
   const copied: { from: string; to: string }[] = [];
