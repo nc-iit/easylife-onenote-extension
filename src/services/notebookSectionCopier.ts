@@ -340,10 +340,30 @@ async function copySectionFile(
 }
 
 /** Resolves the section Teams shows by default, whatever it is called in this tenant. */
-function resolveDefaultSectionName(targetFiles: DriveItem[]): string | undefined {
-  const sections = targetFiles.filter((f) => f.name.toLowerCase().endsWith(SECTION_EXTENSION));
-  const localised = sections.find((f) => DEFAULT_SECTION_NAMES.includes(normalizeName(f.name)));
-  return (localised ?? sections[0])?.name;
+function findDefaultSectionName(targetFiles: DriveItem[]): string | undefined {
+  return targetFiles
+    .filter((f) => f.name.toLowerCase().endsWith(SECTION_EXTENSION))
+    .find((f) => DEFAULT_SECTION_NAMES.includes(normalizeName(f.name)))?.name;
+}
+
+/** Teams creates its channel section after the webhook fires, so give it time to appear. */
+async function resolveDefaultSectionName(target: NotebookLocation, token: string): Promise<string> {
+  let files: DriveItem[] = [];
+
+  for (let attempt = 0; attempt < PROVISIONING_ATTEMPTS; attempt++) {
+    files = await listChildren(target.driveId, `items/${target.folderId}/children`, token);
+    const defaultSection = findDefaultSectionName(files);
+    if (defaultSection) {
+      return defaultSection;
+    }
+    await sleep(PROVISIONING_DELAY_MS);
+  }
+
+  const fallback = files.find((f) => f.name.toLowerCase().endsWith(SECTION_EXTENSION))?.name;
+  if (!fallback) {
+    throw new Error("No section found to use as the default target section.");
+  }
+  return fallback;
 }
 
 /** Copies template sections (.one files) into the notebook of the newly provisioned group. */
@@ -365,12 +385,10 @@ export async function copyTemplateSectionsToGroup(options: CopyTemplateOptions):
   const mappings = sections.length ? sections : sourceSections.map((s) => ({ from: s.name, to: s.name }));
   const copied: { from: string; to: string }[] = [];
 
-  const existingTargetFiles = await listChildren(
-    targetNotebook.driveId,
-    `items/${targetNotebook.folderId}/children`,
-    token
-  );
-  const defaultSectionName = resolveDefaultSectionName(existingTargetFiles);
+  const needsDefaultSection = mappings.some((m) => normalizeName(m.to) === DEFAULT_SECTION_TOKEN);
+  const defaultSectionName = needsDefaultSection
+    ? await resolveDefaultSectionName(targetNotebook, token)
+    : undefined;
 
   for (const mapping of mappings) {
     const sourceSection = sourceSections.find((s) => normalizeName(s.name) === normalizeName(mapping.from));
@@ -379,13 +397,8 @@ export async function copyTemplateSectionsToGroup(options: CopyTemplateOptions):
       throw new Error(`Template section "${mapping.from}" not found. Available sections: ${available}`);
     }
 
-    let targetName = mapping.to;
-    if (normalizeName(targetName) === DEFAULT_SECTION_TOKEN) {
-      if (!defaultSectionName) {
-        throw new Error("No existing section found to use as the default target section.");
-      }
-      targetName = defaultSectionName;
-    }
+    const targetName =
+      normalizeName(mapping.to) === DEFAULT_SECTION_TOKEN ? (defaultSectionName as string) : mapping.to;
 
     await copySectionFile(sourceNotebook, sourceSection.id, targetNotebook, targetName, token);
     copied.push({ from: normalizeName(sourceSection.name), to: normalizeName(targetName) });
