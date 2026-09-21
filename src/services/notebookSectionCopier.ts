@@ -113,6 +113,22 @@ async function listDrives(siteId: string, token: string): Promise<{ id: string; 
     }
   }
 
+  // Graph hides some system libraries from /drives and /lists; SiteAssets holds the notebooks.
+  for (const knownList of ["SiteAssets", "Site Assets", "Shared Documents", "Documents"]) {
+    try {
+      const drive = await getJson<{ id: string; name?: string }>(
+        `/sites/${siteId}/lists/${encodeURIComponent(knownList)}/drive?$select=id,name`,
+        token,
+        `Resolving drive of list ${knownList}`
+      );
+      if (!drives.has(drive.id)) {
+        drives.set(drive.id, { id: drive.id, name: drive.name ?? knownList });
+      }
+    } catch {
+      // Library does not exist under this name.
+    }
+  }
+
   return [...drives.values()];
 }
 
@@ -161,6 +177,30 @@ async function findNotebookInDrive(
   return walk(rootFolders, 1);
 }
 
+/** Fallback when the notebook sits deeper than the folder walk reaches. */
+async function searchNotebookInDrive(
+  drive: { id: string; name: string },
+  notebookName: string,
+  token: string
+): Promise<NotebookLocation | undefined> {
+  const response = await graphFetch(
+    `/drives/${drive.id}/root/search(q='${encodeURIComponent(notebookName)}')?$select=id,name,folder`,
+    token
+  );
+  if (!response.ok) {
+    return undefined;
+  }
+
+  const body = (await response.json()) as { value: DriveItem[] };
+  for (const item of body.value.filter((i) => i.folder)) {
+    const children = await listChildren(drive.id, `items/${item.id}/children`, token);
+    if (isNotebookFolder(children)) {
+      return { driveId: drive.id, driveName: drive.name, folderId: item.id, folderName: item.name };
+    }
+  }
+  return undefined;
+}
+
 /** Notebooks may live in any document library of the site, not only in "Site Assets". */
 async function findNotebook(
   siteId: string,
@@ -176,6 +216,15 @@ async function findNotebook(
     const found = await findNotebookInDrive(drive, notebookName, token, inspected);
     if (found) {
       return found;
+    }
+  }
+
+  if (notebookName) {
+    for (const drive of ordered) {
+      const found = await searchNotebookInDrive(drive, notebookName, token);
+      if (found) {
+        return found;
+      }
     }
   }
 
