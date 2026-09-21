@@ -80,12 +80,40 @@ async function resolveSiteId(source: TemplateSource, token: string): Promise<str
 }
 
 async function listDrives(siteId: string, token: string): Promise<{ id: string; name: string }[]> {
-  const body = await getJson<{ value: { id: string; name: string }[] }>(
+  const drives = new Map<string, { id: string; name: string }>();
+
+  const direct = await getJson<{ value: { id: string; name: string }[] }>(
     `/sites/${siteId}/drives?$select=id,name`,
     token,
     `Listing document libraries of site ${siteId}`
   );
-  return body.value;
+  for (const drive of direct.value) {
+    drives.set(drive.id, drive);
+  }
+
+  // /drives omits some libraries (notably "Site Assets"), so also resolve them through /lists.
+  const lists = await getJson<{ value: { id: string; displayName: string; list?: { template?: string } }[] }>(
+    `/sites/${siteId}/lists?$select=id,displayName,list&$top=200`,
+    token,
+    `Listing lists of site ${siteId}`
+  );
+
+  for (const list of lists.value.filter((l) => l.list?.template === "documentLibrary")) {
+    try {
+      const drive = await getJson<{ id: string; name?: string }>(
+        `/sites/${siteId}/lists/${list.id}/drive?$select=id,name`,
+        token,
+        `Resolving drive of list ${list.displayName}`
+      );
+      if (!drives.has(drive.id)) {
+        drives.set(drive.id, { id: drive.id, name: drive.name ?? list.displayName });
+      }
+    } catch {
+      // Lists without an associated drive are not relevant here.
+    }
+  }
+
+  return [...drives.values()];
 }
 
 async function listChildren(driveId: string, itemPath: string, token: string): Promise<DriveItem[]> {
