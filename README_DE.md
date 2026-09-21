@@ -203,10 +203,10 @@ Ein erfolgreicher Aufruf sieht ungefähr so aus:
 ```json
 {
   "status": "ok",
-  "pagesCopied": 3,
-  "sections": [
-    { "from": "Besprechungen", "to": "Besprechungen", "pagesCopied": 3 }
-  ]
+  "sectionsCopied": [{ "from": "vorlage", "to": "allgemein" }],
+  "templateNotebook": "Site Assets/T-int-M365 Notebook",
+  "targetNotebook": "Site Assets/Projekt Contoso Notebook",
+  "filesInTargetNotebook": ["Allgemein.one", "Projekt Contoso Notebook.onetoc2"]
 }
 ```
 

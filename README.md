@@ -205,10 +205,10 @@ A successful response looks like this:
 ```json
 {
   "status": "ok",
-  "pagesCopied": 3,
-  "sections": [
-    { "from": "Meetings", "to": "Meetings", "pagesCopied": 3 }
-  ]
+  "sectionsCopied": [{ "from": "meetings", "to": "general" }],
+  "templateNotebook": "Site Assets/Template Notebook",
+  "targetNotebook": "Site Assets/Contoso Project Notebook",
+  "filesInTargetNotebook": ["General.one", "Contoso Project Notebook.onetoc2"]
 }
 ```
 
