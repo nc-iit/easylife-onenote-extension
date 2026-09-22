@@ -20,6 +20,15 @@ function splitNames(value: string | null | undefined): string[] {
     .filter((name) => name.length > 0);
 }
 
+/** Accepts singular and plural spellings, repeated query parameters, and comma-separated lists. */
+function readList(request: HttpRequest, queryNames: string[], envNames: string[]): string[] {
+  const fromQuery = queryNames.flatMap((name) => request.query.getAll(name).flatMap(splitNames));
+  if (fromQuery.length) {
+    return fromQuery;
+  }
+  return envNames.flatMap((name) => splitNames(process.env[name]));
+}
+
 function buildSectionMappings(from: string[], to: string[]): { from: string; to: string }[] {
   return from.map((name, index) => ({ from: name, to: to[index] ?? name }));
 }
@@ -38,24 +47,39 @@ export async function provisionOneNoteTemplate(
   }
 
   // Everything below can be set per EasyLife automation step via the webhook URL query string.
-  const templateSiteUrl = request.query.get("templateSiteUrl") ?? process.env.DEFAULT_TEMPLATE_SITE_URL;
-  const templateGroupId = request.query.get("templateGroupId") ?? process.env.DEFAULT_TEMPLATE_GROUP_ID;
-  const notebookName =
-    request.query.get("templateNotebookName") ?? process.env.DEFAULT_TEMPLATE_NOTEBOOK_NAME ?? undefined;
-
-  const templateSectionNames = splitNames(
-    request.query.get("templateSectionName") ?? process.env.DEFAULT_TEMPLATE_SECTION_NAMES
+  const templateSiteUrls = readList(
+    request,
+    ["templateSiteUrl", "templateSiteUrls", "templateSite", "templateSites"],
+    ["DEFAULT_TEMPLATE_SITE_URL", "DEFAULT_TEMPLATE_SITE_URLS"]
   );
-  const targetSectionNames = splitNames(
-    request.query.get("targetSectionName") ?? process.env.DEFAULT_TARGET_SECTION_NAMES
+  const templateGroupIds = readList(
+    request,
+    ["templateGroupId", "templateGroupIds", "templateGroup", "templateGroups"],
+    ["DEFAULT_TEMPLATE_GROUP_ID", "DEFAULT_TEMPLATE_GROUP_IDS"]
+  );
+  const notebookNames = readList(
+    request,
+    ["templateNotebookName", "templateNotebookNames", "templateNotebook", "templateNotebooks"],
+    ["DEFAULT_TEMPLATE_NOTEBOOK_NAME", "DEFAULT_TEMPLATE_NOTEBOOK_NAMES"]
   );
 
-  let source: TemplateSource;
-  if (templateSiteUrl) {
-    source = { kind: "site", siteUrl: templateSiteUrl, notebookName };
-  } else if (templateGroupId) {
-    source = { kind: "group", groupId: templateGroupId, notebookName };
-  } else {
+  const templateSectionNames = readList(
+    request,
+    ["templateSectionName", "templateSectionNames", "templateSection", "templateSections"],
+    ["DEFAULT_TEMPLATE_SECTION_NAMES", "DEFAULT_TEMPLATE_SECTION_NAME"]
+  );
+  const targetSectionNames = readList(
+    request,
+    ["targetSectionName", "targetSectionNames", "targetSection", "targetSections"],
+    ["DEFAULT_TARGET_SECTION_NAMES", "DEFAULT_TARGET_SECTION_NAME"]
+  );
+
+  const sources: TemplateSource[] = [
+    ...templateSiteUrls.map((siteUrl) => ({ kind: "site" as const, siteUrl, notebookNames })),
+    ...templateGroupIds.map((groupId) => ({ kind: "group" as const, groupId, notebookNames })),
+  ];
+
+  if (!sources.length) {
     context.warn(
       "No template source configured. Set templateSiteUrl/templateGroupId in the webhook URL or DEFAULT_TEMPLATE_SITE_URL/DEFAULT_TEMPLATE_GROUP_ID in the app settings."
     );
@@ -66,15 +90,15 @@ export async function provisionOneNoteTemplate(
   }
 
   context.log(
-    `Copying into group ${targetGroupId} from ${source.kind} source`,
-    JSON.stringify({ notebookName, templateSectionNames, targetSectionNames })
+    `Copying into group ${targetGroupId} from ${sources.length} template source(s)`,
+    JSON.stringify({ templateSiteUrls, templateGroupIds, notebookNames, templateSectionNames, targetSectionNames })
   );
 
   try {
     const token = await getGraphAccessToken();
     const result = await copyTemplateSectionsToGroup({
       token,
-      source,
+      sources,
       sections: buildSectionMappings(templateSectionNames, targetSectionNames),
       targetGroupId,
     });

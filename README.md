@@ -182,6 +182,37 @@ To copy multiple sections:
 ...&templateSectionName=Meetings,Documentation,Agenda
 ```
 
+### Combine Several Templates
+
+`templateNotebookName`, `templateSiteUrl`, and `templateGroupId` accept comma-separated lists. Several notebooks of the same site:
+
+```text
+...&templateNotebookName=Template,Status%20meeting
+```
+
+Several sites:
+
+```text
+...&templateSiteUrl=https%3A%2F%2Fcontoso.sharepoint.com%2Fsites%2FA,https%3A%2F%2Fcontoso.sharepoint.com%2Fsites%2FB
+```
+
+Without `templateNotebookName`, every notebook of the given sites is treated as a template. Combined with `templateSectionName` this picks a section without knowing its notebook:
+
+```text
+...&templateSiteUrl=https%3A%2F%2Fcontoso.sharepoint.com%2Fsites%2FOneNoteTemplates&templateSectionName=Meeting%20Notes&targetSectionName=%40default
+```
+
+If a section name exists in several notebooks, the first match wins. If one site or notebook is unreachable, the remaining sources are still processed.
+
+Every parameter accepts singular and plural spellings as well as repeated query parameters. `templateNotebook`, `templateNotebooks`, `templateNotebookName`, and `templateNotebookNames` are equivalent; the same applies to `templateSite`, `templateGroup`, `templateSection`, and `targetSection`. These variants are valid too:
+
+```text
+...&templateNotebooks=Template,Status%20meeting
+...&templateNotebook=Template&templateNotebook=Status%20meeting
+```
+
+Without any parameter, every section of every template notebook found is copied 1:1 under its original name.
+
 The Teams channel tab is pinned to the notebook's default section, which is named differently per tenant language (`General`, `Allgemein`, ...). Use `@default` to overwrite exactly that section, so the template appears where users look first:
 
 ```text
@@ -206,7 +237,7 @@ A successful response looks like this:
 {
   "status": "ok",
   "sectionsCopied": [{ "from": "meetings", "to": "general" }],
-  "templateNotebook": "Site Assets/Template Notebook",
+  "templateNotebooks": ["Site Assets/Template Notebook"],
   "targetNotebook": "Site Assets/Contoso Project Notebook",
   "filesInTargetNotebook": ["General.one", "Contoso Project Notebook.onetoc2"]
 }

@@ -4,19 +4,19 @@ import { graphFetch, sleep } from "./graphClient";
 // the underlying .one files through the SharePoint Drive API instead.
 
 export type TemplateSource =
-  | { kind: "site"; siteUrl: string; notebookName?: string }
-  | { kind: "group"; groupId: string; notebookName?: string };
+  | { kind: "site"; siteUrl: string; notebookNames: string[] }
+  | { kind: "group"; groupId: string; notebookNames: string[] };
 
 export interface CopyTemplateOptions {
   token: string;
-  source: TemplateSource;
+  sources: TemplateSource[];
   sections: { from: string; to: string }[];
   targetGroupId: string;
 }
 
 export interface CopyTemplateResult {
   sectionsCopied: { from: string; to: string }[];
-  templateNotebook: string;
+  templateNotebooks: string[];
   targetNotebook: string;
   filesInTargetNotebook: string[];
 }
@@ -28,11 +28,21 @@ interface DriveItem {
   file?: { mimeType?: string };
 }
 
+interface DriveRef {
+  id: string;
+  name: string;
+}
+
 interface NotebookLocation {
   driveId: string;
   driveName: string;
   folderId: string;
   folderName: string;
+}
+
+interface TemplateSection {
+  notebook: NotebookLocation;
+  item: DriveItem;
 }
 
 const SECTION_EXTENSION = ".one";
@@ -97,53 +107,55 @@ async function resolveSiteId(source: TemplateSource, token: string): Promise<str
     : resolveSiteIdFromGroup(source.groupId, token);
 }
 
-async function listDrives(siteId: string, token: string): Promise<{ id: string; name: string }[]> {
-  const drives = new Map<string, { id: string; name: string }>();
+/** Some tenants answer this endpoint without an id, which used to produce "/drives/undefined". */
+async function resolveListDrive(
+  siteId: string,
+  list: string,
+  fallbackName: string,
+  token: string
+): Promise<DriveRef | undefined> {
+  const response = await graphFetch(`/sites/${siteId}/lists/${list}/drive`, token);
+  if (!response.ok) {
+    return undefined;
+  }
 
-  const direct = await getJson<{ value: { id: string; name: string }[] }>(
+  const drive = (await response.json().catch(() => undefined)) as { id?: string; name?: string } | undefined;
+  return drive?.id ? { id: drive.id, name: drive.name ?? fallbackName } : undefined;
+}
+
+async function listDrives(siteId: string, token: string): Promise<DriveRef[]> {
+  const drives = new Map<string, DriveRef>();
+
+  const direct = await getJson<{ value: { id?: string; name?: string }[] }>(
     `/sites/${siteId}/drives?$select=id,name`,
     token,
     `Listing document libraries of site ${siteId}`
   );
   for (const drive of direct.value) {
-    drives.set(drive.id, drive);
+    if (drive.id) {
+      drives.set(drive.id, { id: drive.id, name: drive.name ?? drive.id });
+    }
   }
 
   // /drives omits some libraries (notably "Site Assets"), so also resolve them through /lists.
-  const lists = await getJson<{ value: { id: string; displayName: string; list?: { template?: string } }[] }>(
-    `/sites/${siteId}/lists?$select=id,displayName,list&$top=200`,
+  const lists = await getJson<{ value: { id: string; displayName: string }[] }>(
+    `/sites/${siteId}/lists?$select=id,displayName&$top=200`,
     token,
     `Listing lists of site ${siteId}`
   );
 
   for (const list of lists.value) {
-    try {
-      const drive = await getJson<{ id: string; name?: string }>(
-        `/sites/${siteId}/lists/${list.id}/drive?$select=id,name`,
-        token,
-        `Resolving drive of list ${list.displayName}`
-      );
-      if (!drives.has(drive.id)) {
-        drives.set(drive.id, { id: drive.id, name: drive.name ?? list.displayName });
-      }
-    } catch {
-      // Lists without an associated drive are not relevant here.
+    const drive = await resolveListDrive(siteId, list.id, list.displayName, token);
+    if (drive && !drives.has(drive.id)) {
+      drives.set(drive.id, drive);
     }
   }
 
   // Graph hides some system libraries from /drives and /lists; SiteAssets holds the notebooks.
   for (const knownList of ["SiteAssets", "Site Assets", "Shared Documents", "Documents"]) {
-    try {
-      const drive = await getJson<{ id: string; name?: string }>(
-        `/sites/${siteId}/lists/${encodeURIComponent(knownList)}/drive?$select=id,name`,
-        token,
-        `Resolving drive of list ${knownList}`
-      );
-      if (!drives.has(drive.id)) {
-        drives.set(drive.id, { id: drive.id, name: drive.name ?? knownList });
-      }
-    } catch {
-      // Library does not exist under this name.
+    const drive = await resolveListDrive(siteId, encodeURIComponent(knownList), knownList, token);
+    if (drive && !drives.has(drive.id)) {
+      drives.set(drive.id, drive);
     }
   }
 
@@ -165,39 +177,37 @@ function isNotebookFolder(children: DriveItem[]): boolean {
 
 const MAX_FOLDER_DEPTH = 3;
 
-async function findNotebookInDrive(
-  drive: { id: string; name: string },
-  notebookName: string | undefined,
+async function collectNotebooksInDrive(
+  drive: DriveRef,
   token: string,
   inspected: string[]
-): Promise<NotebookLocation | undefined> {
-  async function walk(folders: DriveItem[], depth: number): Promise<NotebookLocation | undefined> {
+): Promise<NotebookLocation[]> {
+  const found: NotebookLocation[] = [];
+
+  async function walk(folders: DriveItem[], depth: number): Promise<void> {
     for (const folder of folders) {
       const children = await listChildren(drive.id, `items/${folder.id}/children`, token);
       inspected.push(`${drive.name}/${folder.name}`);
 
-      const nameMatches = !notebookName || normalizeName(folder.name) === normalizeName(notebookName);
-      if (nameMatches && isNotebookFolder(children)) {
-        return { driveId: drive.id, driveName: drive.name, folderId: folder.id, folderName: folder.name };
+      if (isNotebookFolder(children)) {
+        found.push({ driveId: drive.id, driveName: drive.name, folderId: folder.id, folderName: folder.name });
+        continue;
       }
 
       if (depth < MAX_FOLDER_DEPTH) {
-        const nested = await walk(children.filter((c) => c.folder), depth + 1);
-        if (nested) {
-          return nested;
-        }
+        await walk(children.filter((c) => c.folder), depth + 1);
       }
     }
-    return undefined;
   }
 
   const rootFolders = (await listChildren(drive.id, "root/children", token)).filter((item) => item.folder);
-  return walk(rootFolders, 1);
+  await walk(rootFolders, 1);
+  return found;
 }
 
 /** Fallback when the notebook sits deeper than the folder walk reaches. */
 async function searchNotebookInDrive(
-  drive: { id: string; name: string },
+  drive: DriveRef,
   notebookName: string,
   token: string
 ): Promise<NotebookLocation | undefined> {
@@ -219,39 +229,62 @@ async function searchNotebookInDrive(
   return undefined;
 }
 
-/** Notebooks may live in any document library of the site, not only in "Site Assets". */
-async function findNotebook(
+function notebookNotFound(
   siteId: string,
   notebookName: string | undefined,
+  drives: DriveRef[],
+  inspected: string[]
+): Error {
+  const libraries = drives.map((d) => d.name).join(", ") || "none";
+  const folders = inspected.join(", ") || "none";
+  return new Error(
+    `Notebook ${notebookName ? `"${notebookName}" ` : ""}not found in site ${siteId}. ` +
+      `Libraries: ${libraries}. Folders inspected: ${folders}`
+  );
+}
+
+/** Notebooks may live in any document library of the site, not only in "Site Assets". */
+async function findNotebooks(
+  siteId: string,
+  notebookNames: string[],
   token: string
-): Promise<NotebookLocation> {
+): Promise<NotebookLocation[]> {
   const drives = await listDrives(siteId, token);
   // "Site Assets" holds notebooks in most tenants, so check it first.
   const ordered = [...drives].sort((a, b) => Number(/site\s*assets/i.test(b.name)) - Number(/site\s*assets/i.test(a.name)));
   const inspected: string[] = [];
 
+  const notebooks: NotebookLocation[] = [];
   for (const drive of ordered) {
-    const found = await findNotebookInDrive(drive, notebookName, token, inspected);
-    if (found) {
-      return found;
-    }
+    notebooks.push(...(await collectNotebooksInDrive(drive, token, inspected)));
   }
 
-  if (notebookName) {
+  // Without explicit names every notebook of the site is treated as a template.
+  if (!notebookNames.length) {
+    if (!notebooks.length) {
+      throw notebookNotFound(siteId, undefined, drives, inspected);
+    }
+    return notebooks;
+  }
+
+  const matched: NotebookLocation[] = [];
+  for (const name of notebookNames) {
+    let match = notebooks.find((n) => normalizeName(n.folderName) === normalizeName(name));
+
     for (const drive of ordered) {
-      const found = await searchNotebookInDrive(drive, notebookName, token);
-      if (found) {
-        return found;
+      if (match) {
+        break;
       }
+      match = await searchNotebookInDrive(drive, name, token);
     }
+
+    if (!match) {
+      throw notebookNotFound(siteId, name, drives, inspected);
+    }
+    matched.push(match);
   }
 
-  const libraries = drives.map((d) => d.name).join(", ") || "none";
-  const folders = inspected.join(", ") || "none";
-  throw new Error(
-    `Notebook ${notebookName ? `"${notebookName}" ` : ""}not found in site ${siteId}. ` +
-      `Libraries: ${libraries}. Folders inspected: ${folders}`
-  );
+  return matched;
 }
 
 /** Retries while the group's site or notebook is still being provisioned. */
@@ -366,23 +399,66 @@ async function resolveDefaultSectionName(target: NotebookLocation, token: string
   return fallback;
 }
 
+/** Keeps the first notebook that provides a section name when several templates overlap. */
+function dedupeSections(sections: TemplateSection[]): TemplateSection[] {
+  const seen = new Set<string>();
+  return sections.filter((section) => {
+    const key = normalizeName(section.item.name);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+async function collectTemplateSections(
+  sources: TemplateSource[],
+  token: string
+): Promise<{ sections: TemplateSection[]; notebooks: string[] }> {
+  const sections: TemplateSection[] = [];
+  const notebooks: string[] = [];
+  const failures: string[] = [];
+
+  for (const source of sources) {
+    try {
+      const siteId = await resolveSiteId(source, token);
+      for (const notebook of await findNotebooks(siteId, source.notebookNames, token)) {
+        notebooks.push(`${notebook.driveName}/${notebook.folderName}`);
+        const items = await listChildren(notebook.driveId, `items/${notebook.folderId}/children`, token);
+        for (const item of items.filter((i) => i.file && i.name.toLowerCase().endsWith(SECTION_EXTENSION))) {
+          sections.push({ notebook, item });
+        }
+      }
+    } catch (err) {
+      // One unreachable template must not break the remaining sources.
+      failures.push((err as Error).message);
+    }
+  }
+
+  if (!sections.length) {
+    throw new Error(`No template sections found. ${failures.join(" | ") || "The templates contain no sections."}`);
+  }
+
+  return { sections, notebooks: [...new Set(notebooks)] };
+}
+
 /** Copies template sections (.one files) into the notebook of the newly provisioned group. */
 export async function copyTemplateSectionsToGroup(options: CopyTemplateOptions): Promise<CopyTemplateResult> {
-  const { token, source, sections, targetGroupId } = options;
+  const { token, sources, sections, targetGroupId } = options;
 
-  const sourceSiteId = await resolveSiteId(source, token);
-  const sourceNotebook = await findNotebook(sourceSiteId, source.notebookName, token);
-  const sourceSections = (await listChildren(sourceNotebook.driveId, `items/${sourceNotebook.folderId}/children`, token))
-    .filter((item) => item.file && item.name.toLowerCase().endsWith(SECTION_EXTENSION));
+  const { sections: sourceSections, notebooks: templateNotebooks } = await collectTemplateSections(sources, token);
 
   const targetSiteId = await waitForProvisioned(`Site of group ${targetGroupId}`, () =>
     resolveSiteIdFromGroup(targetGroupId, token)
   );
-  const targetNotebook = await waitForProvisioned(`Notebook of group ${targetGroupId}`, () =>
-    findNotebook(targetSiteId, undefined, token)
+  const targetNotebook = await waitForProvisioned(`Notebook of group ${targetGroupId}`, async () =>
+    (await findNotebooks(targetSiteId, [], token))[0]
   );
 
-  const mappings = sections.length ? sections : sourceSections.map((s) => ({ from: s.name, to: s.name }));
+  const mappings = sections.length
+    ? sections
+    : dedupeSections(sourceSections).map((s) => ({ from: s.item.name, to: s.item.name }));
   const copied: { from: string; to: string }[] = [];
 
   const needsDefaultSection = mappings.some((m) => normalizeName(m.to) === DEFAULT_SECTION_TOKEN);
@@ -391,17 +467,17 @@ export async function copyTemplateSectionsToGroup(options: CopyTemplateOptions):
     : undefined;
 
   for (const mapping of mappings) {
-    const sourceSection = sourceSections.find((s) => normalizeName(s.name) === normalizeName(mapping.from));
+    const sourceSection = sourceSections.find((s) => normalizeName(s.item.name) === normalizeName(mapping.from));
     if (!sourceSection) {
-      const available = sourceSections.map((s) => normalizeName(s.name)).join(", ") || "none";
+      const available = sourceSections.map((s) => normalizeName(s.item.name)).join(", ") || "none";
       throw new Error(`Template section "${mapping.from}" not found. Available sections: ${available}`);
     }
 
     const targetName =
       normalizeName(mapping.to) === DEFAULT_SECTION_TOKEN ? (defaultSectionName as string) : mapping.to;
 
-    await copySectionFile(sourceNotebook, sourceSection.id, targetNotebook, targetName, token);
-    copied.push({ from: normalizeName(sourceSection.name), to: normalizeName(targetName) });
+    await copySectionFile(sourceSection.notebook, sourceSection.item.id, targetNotebook, targetName, token);
+    copied.push({ from: normalizeName(sourceSection.item.name), to: normalizeName(targetName) });
   }
 
   const filesInTargetNotebook = (
@@ -410,7 +486,7 @@ export async function copyTemplateSectionsToGroup(options: CopyTemplateOptions):
 
   return {
     sectionsCopied: copied,
-    templateNotebook: `${sourceNotebook.driveName}/${sourceNotebook.folderName}`,
+    templateNotebooks,
     targetNotebook: `${targetNotebook.driveName}/${targetNotebook.folderName}`,
     filesInTargetNotebook,
   };
