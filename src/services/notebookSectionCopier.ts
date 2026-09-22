@@ -243,6 +243,20 @@ function notebookNotFound(
   );
 }
 
+/** Lists the notebooks and their sections so a wrong name is obvious in the error message. */
+async function describeNotebooks(notebooks: NotebookLocation[], token: string): Promise<string> {
+  const described = await Promise.all(
+    notebooks.map(async (notebook) => {
+      const children = await listChildren(notebook.driveId, `items/${notebook.folderId}/children`, token);
+      const sections = children
+        .filter((c) => c.file && c.name.toLowerCase().endsWith(SECTION_EXTENSION))
+        .map((c) => normalizeName(c.name));
+      return `${notebook.driveName}/${notebook.folderName} [${sections.join(", ") || "no sections"}]`;
+    })
+  );
+  return described.join("; ") || "none";
+}
+
 /** Notebooks may live in any document library of the site, not only in "Site Assets". */
 async function findNotebooks(
   siteId: string,
@@ -279,7 +293,11 @@ async function findNotebooks(
     }
 
     if (!match) {
-      throw notebookNotFound(siteId, name, drives, inspected);
+      throw new Error(
+        `Notebook "${name}" not found in site ${siteId}. ` +
+          `Notebooks found: ${await describeNotebooks(notebooks, token)}. ` +
+          `Omit templateNotebookName to search every notebook of the site.`
+      );
     }
     matched.push(match);
   }
@@ -469,7 +487,8 @@ export async function copyTemplateSectionsToGroup(options: CopyTemplateOptions):
   for (const mapping of mappings) {
     const sourceSection = sourceSections.find((s) => normalizeName(s.item.name) === normalizeName(mapping.from));
     if (!sourceSection) {
-      const available = sourceSections.map((s) => normalizeName(s.item.name)).join(", ") || "none";
+      const available =
+        sourceSections.map((s) => `${s.notebook.folderName}/${normalizeName(s.item.name)}`).join(", ") || "none";
       throw new Error(`Template section "${mapping.from}" not found. Available sections: ${available}`);
     }
 
