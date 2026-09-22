@@ -38,10 +38,15 @@ export async function provisionOneNoteTemplate(
   }
 
   // Everything below can be set per EasyLife automation step via the webhook URL query string.
-  const templateSiteUrl = request.query.get("templateSiteUrl") ?? process.env.DEFAULT_TEMPLATE_SITE_URL;
-  const templateGroupId = request.query.get("templateGroupId") ?? process.env.DEFAULT_TEMPLATE_GROUP_ID;
-  const notebookName =
-    request.query.get("templateNotebookName") ?? process.env.DEFAULT_TEMPLATE_NOTEBOOK_NAME ?? undefined;
+  const templateSiteUrls = splitNames(
+    request.query.get("templateSiteUrl") ?? process.env.DEFAULT_TEMPLATE_SITE_URL
+  );
+  const templateGroupIds = splitNames(
+    request.query.get("templateGroupId") ?? process.env.DEFAULT_TEMPLATE_GROUP_ID
+  );
+  const notebookNames = splitNames(
+    request.query.get("templateNotebookName") ?? process.env.DEFAULT_TEMPLATE_NOTEBOOK_NAME
+  );
 
   const templateSectionNames = splitNames(
     request.query.get("templateSectionName") ?? process.env.DEFAULT_TEMPLATE_SECTION_NAMES
@@ -50,12 +55,12 @@ export async function provisionOneNoteTemplate(
     request.query.get("targetSectionName") ?? process.env.DEFAULT_TARGET_SECTION_NAMES
   );
 
-  let source: TemplateSource;
-  if (templateSiteUrl) {
-    source = { kind: "site", siteUrl: templateSiteUrl, notebookName };
-  } else if (templateGroupId) {
-    source = { kind: "group", groupId: templateGroupId, notebookName };
-  } else {
+  const sources: TemplateSource[] = [
+    ...templateSiteUrls.map((siteUrl) => ({ kind: "site" as const, siteUrl, notebookNames })),
+    ...templateGroupIds.map((groupId) => ({ kind: "group" as const, groupId, notebookNames })),
+  ];
+
+  if (!sources.length) {
     context.warn(
       "No template source configured. Set templateSiteUrl/templateGroupId in the webhook URL or DEFAULT_TEMPLATE_SITE_URL/DEFAULT_TEMPLATE_GROUP_ID in the app settings."
     );
@@ -66,15 +71,15 @@ export async function provisionOneNoteTemplate(
   }
 
   context.log(
-    `Copying into group ${targetGroupId} from ${source.kind} source`,
-    JSON.stringify({ notebookName, templateSectionNames, targetSectionNames })
+    `Copying into group ${targetGroupId} from ${sources.length} template source(s)`,
+    JSON.stringify({ templateSiteUrls, templateGroupIds, notebookNames, templateSectionNames, targetSectionNames })
   );
 
   try {
     const token = await getGraphAccessToken();
     const result = await copyTemplateSectionsToGroup({
       token,
-      source,
+      sources,
       sections: buildSectionMappings(templateSectionNames, targetSectionNames),
       targetGroupId,
     });

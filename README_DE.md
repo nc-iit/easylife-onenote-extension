@@ -180,6 +180,28 @@ Für mehrere Sections:
 ...&templateSectionName=Besprechungen,Dokumentation,Traktandenliste
 ```
 
+### Mehrere Vorlagen kombinieren
+
+`templateNotebookName`, `templateSiteUrl` und `templateGroupId` akzeptieren kommagetrennte Listen. Mehrere Notizbücher derselben Site:
+
+```text
+...&templateNotebookName=Vorlage,Status%20meeting
+```
+
+Mehrere Sites:
+
+```text
+...&templateSiteUrl=https%3A%2F%2Fcontoso.sharepoint.com%2Fsites%2FA,https%3A%2F%2Fcontoso.sharepoint.com%2Fsites%2FB
+```
+
+Ohne `templateNotebookName` werden alle Notizbücher der angegebenen Sites als Vorlage verwendet. Mit `templateSectionName` lässt sich daraus gezielt eine Section übernehmen, ohne das Notizbuch zu kennen:
+
+```text
+...&templateSiteUrl=https%3A%2F%2Fcontoso.sharepoint.com%2Fsites%2FT-int-M365&templateSectionName=Meeting%20Notes&targetSectionName=%40default
+```
+
+Kommt eine Section in mehreren Notizbüchern vor, gewinnt der erste Treffer. Ist eine Site oder ein Notizbuch nicht erreichbar, werden die übrigen Quellen trotzdem verarbeitet.
+
 Die Teams-Registerkarte eines Kanals ist fest an den Standardabschnitt des Notizbuchs gebunden, dessen Name je nach Tenant-Sprache variiert (`General`, `Allgemein`, ...). Mit `@default` wird genau dieser Abschnitt überschrieben, damit die Vorlage dort erscheint, wo Anwender zuerst hinschauen:
 
 ```text
@@ -204,7 +226,7 @@ Ein erfolgreicher Aufruf sieht ungefähr so aus:
 {
   "status": "ok",
   "sectionsCopied": [{ "from": "vorlage", "to": "allgemein" }],
-  "templateNotebook": "Site Assets/T-int-M365 Notebook",
+  "templateNotebooks": ["Site Assets/T-int-M365 Notebook"],
   "targetNotebook": "Site Assets/Projekt Contoso Notebook",
   "filesInTargetNotebook": ["Allgemein.one", "Projekt Contoso Notebook.onetoc2"]
 }
