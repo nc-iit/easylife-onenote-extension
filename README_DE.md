@@ -202,6 +202,15 @@ Ohne `templateNotebookName` werden alle Notizbücher der angegebenen Sites als V
 
 Kommt eine Section in mehreren Notizbüchern vor, gewinnt der erste Treffer. Ist eine Site oder ein Notizbuch nicht erreichbar, werden die übrigen Quellen trotzdem verarbeitet.
 
+Jeder Parameter akzeptiert Einzel- und Mehrzahlschreibweise sowie mehrfach wiederholte Query-Parameter. `templateNotebook`, `templateNotebooks`, `templateNotebookName` und `templateNotebookNames` sind gleichwertig; dasselbe gilt für `templateSite`, `templateGroup`, `templateSection` und `targetSection`. Diese Varianten sind ebenfalls gültig:
+
+```text
+...&templateNotebooks=Vorlage,Status%20meeting
+...&templateNotebook=Vorlage&templateNotebook=Status%20meeting
+```
+
+Wird gar kein Parameter gesetzt, werden alle Sections aller gefundenen Vorlage-Notizbücher 1:1 mit ihren Originalnamen kopiert.
+
 Die Teams-Registerkarte eines Kanals ist fest an den Standardabschnitt des Notizbuchs gebunden, dessen Name je nach Tenant-Sprache variiert (`General`, `Allgemein`, ...). Mit `@default` wird genau dieser Abschnitt überschrieben, damit die Vorlage dort erscheint, wo Anwender zuerst hinschauen:
 
 ```text

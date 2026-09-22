@@ -20,6 +20,15 @@ function splitNames(value: string | null | undefined): string[] {
     .filter((name) => name.length > 0);
 }
 
+/** Accepts singular and plural spellings, repeated query parameters, and comma-separated lists. */
+function readList(request: HttpRequest, queryNames: string[], envNames: string[]): string[] {
+  const fromQuery = queryNames.flatMap((name) => request.query.getAll(name).flatMap(splitNames));
+  if (fromQuery.length) {
+    return fromQuery;
+  }
+  return envNames.flatMap((name) => splitNames(process.env[name]));
+}
+
 function buildSectionMappings(from: string[], to: string[]): { from: string; to: string }[] {
   return from.map((name, index) => ({ from: name, to: to[index] ?? name }));
 }
@@ -38,21 +47,31 @@ export async function provisionOneNoteTemplate(
   }
 
   // Everything below can be set per EasyLife automation step via the webhook URL query string.
-  const templateSiteUrls = splitNames(
-    request.query.get("templateSiteUrl") ?? process.env.DEFAULT_TEMPLATE_SITE_URL
+  const templateSiteUrls = readList(
+    request,
+    ["templateSiteUrl", "templateSiteUrls", "templateSite", "templateSites"],
+    ["DEFAULT_TEMPLATE_SITE_URL", "DEFAULT_TEMPLATE_SITE_URLS"]
   );
-  const templateGroupIds = splitNames(
-    request.query.get("templateGroupId") ?? process.env.DEFAULT_TEMPLATE_GROUP_ID
+  const templateGroupIds = readList(
+    request,
+    ["templateGroupId", "templateGroupIds", "templateGroup", "templateGroups"],
+    ["DEFAULT_TEMPLATE_GROUP_ID", "DEFAULT_TEMPLATE_GROUP_IDS"]
   );
-  const notebookNames = splitNames(
-    request.query.get("templateNotebookName") ?? process.env.DEFAULT_TEMPLATE_NOTEBOOK_NAME
+  const notebookNames = readList(
+    request,
+    ["templateNotebookName", "templateNotebookNames", "templateNotebook", "templateNotebooks"],
+    ["DEFAULT_TEMPLATE_NOTEBOOK_NAME", "DEFAULT_TEMPLATE_NOTEBOOK_NAMES"]
   );
 
-  const templateSectionNames = splitNames(
-    request.query.get("templateSectionName") ?? process.env.DEFAULT_TEMPLATE_SECTION_NAMES
+  const templateSectionNames = readList(
+    request,
+    ["templateSectionName", "templateSectionNames", "templateSection", "templateSections"],
+    ["DEFAULT_TEMPLATE_SECTION_NAMES", "DEFAULT_TEMPLATE_SECTION_NAME"]
   );
-  const targetSectionNames = splitNames(
-    request.query.get("targetSectionName") ?? process.env.DEFAULT_TARGET_SECTION_NAMES
+  const targetSectionNames = readList(
+    request,
+    ["targetSectionName", "targetSectionNames", "targetSection", "targetSections"],
+    ["DEFAULT_TARGET_SECTION_NAMES", "DEFAULT_TARGET_SECTION_NAME"]
   );
 
   const sources: TemplateSource[] = [
